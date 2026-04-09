@@ -152,10 +152,10 @@ Example route object:
 {
   resource: "route",
   name: "page",
-  locale: "nl",
+  locale: "en",
   parameters: {
-    id: 16,
-    slug: "terugkommoment-rijbewijs-hasselt"
+    id: 2,
+    slug: "contact-us"
   }
 }
 ```
