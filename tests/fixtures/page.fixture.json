@@ -1,0 +1,76 @@
+{
+  "id": "page-home",
+  "locale": "en",
+  "path": "/contact-us",
+  "slug": "contact-us",
+  "canonicalPath": "/contact-us",
+  "title": "Contact",
+  "description": "Contact page",
+  "status": "published",
+  "translations": [
+    {
+      "locale": "en",
+      "path": "/contact-us",
+      "slug": "contact-us",
+      "canonical": true
+    },
+    {
+      "locale": "nl",
+      "path": "/contacteer-ons",
+      "slug": "contacteer-ons"
+    },
+    {
+      "locale": "nl-BE",
+      "path": "/contacteer-ons",
+      "slug": "contacteer-ons"
+    }
+  ],
+  "seo": {
+    "title": "Contact Ominity",
+    "description": "Get in touch with Ominity",
+    "robots": {
+      "index": true,
+      "follow": true
+    },
+    "openGraph": {
+      "type": "website",
+      "images": [
+        {
+          "url": "https://cdn.example.com/og/contact.jpg",
+          "alt": "Contact header"
+        }
+      ]
+    }
+  },
+  "components": [
+    {
+      "id": "hero-1",
+      "key": "hero",
+      "type": "hero",
+      "fields": {
+        "title": "Welcome",
+        "button": {
+          "id": "button-1",
+          "key": "button",
+          "type": "button",
+          "fields": {
+            "label": "Talk to us"
+          },
+          "children": []
+        }
+      },
+      "children": [
+        {
+          "id": "text-1",
+          "key": "text",
+          "type": "text",
+          "fields": {
+            "content": "Nested child content"
+          },
+          "children": []
+        }
+      ]
+    }
+  ]
+}
+

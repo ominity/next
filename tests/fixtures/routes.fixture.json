@@ -1,0 +1,46 @@
+{
+  "locales": [
+    {
+      "code": "en",
+      "language": "en",
+      "default": true
+    },
+    {
+      "code": "nl",
+      "language": "nl"
+    },
+    {
+      "code": "nl-BE",
+      "language": "nl",
+      "country": "BE"
+    }
+  ],
+  "routes": [
+    {
+      "id": "route-contact",
+      "pageId": "page-contact",
+      "locale": "en",
+      "path": "/contact-us",
+      "slug": "contact-us",
+      "canonicalPath": "/contact-us",
+      "translations": {
+        "en": "/contact-us",
+        "nl": "/contacteer-ons",
+        "nl-BE": "/contacteer-ons"
+      }
+    },
+    {
+      "id": "route-home",
+      "pageId": "page-home",
+      "locale": "en",
+      "path": "/",
+      "slug": "",
+      "canonicalPath": "/",
+      "translations": {
+        "en": "/",
+        "nl": "/"
+      }
+    }
+  ]
+}
+

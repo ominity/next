@@ -1,0 +1,83 @@
+{
+  "data": {
+    "resource": "form",
+    "id": 101,
+    "name": "contact",
+    "title": "Contact us",
+    "description": "Simple contact form",
+    "submissions": 12,
+    "publishedAt": "2025-01-12T10:00:00.000Z",
+    "updatedAt": "2025-01-20T10:00:00.000Z",
+    "createdAt": "2025-01-01T10:00:00.000Z",
+    "_embedded": {
+      "form_fields": [
+        {
+          "resource": "form_field",
+          "id": 201,
+          "formId": 101,
+          "type": "text",
+          "name": "full_name",
+          "label": "Full name",
+          "isLabelVisible": true,
+          "placeholder": "John Doe",
+          "helper": "",
+          "defaultValue": null,
+          "width": "50%",
+          "isInline": true,
+          "css": {
+            "classes": "field-full-name",
+            "id": "full-name",
+            "style": null
+          },
+          "validation": {
+            "isRequired": true,
+            "minLength": 2,
+            "maxLength": 100,
+            "rules": [
+              {
+                "rule": "required",
+                "message": "Name is required"
+              }
+            ],
+            "message": "Name is required"
+          },
+          "options": [],
+          "order": 1,
+          "updatedAt": "2025-01-20T10:00:00.000Z",
+          "createdAt": "2025-01-01T10:00:00.000Z"
+        },
+        {
+          "resource": "form_field",
+          "id": 202,
+          "formId": 101,
+          "type": "metadata",
+          "name": "metadata",
+          "label": "Metadata",
+          "isLabelVisible": false,
+          "placeholder": "",
+          "helper": "",
+          "defaultValue": null,
+          "width": null,
+          "isInline": false,
+          "css": {
+            "classes": null,
+            "id": null,
+            "style": null
+          },
+          "validation": {
+            "isRequired": false,
+            "minLength": null,
+            "maxLength": null,
+            "rules": [],
+            "message": ""
+          },
+          "options": ["page_url", "locale"],
+          "order": 2,
+          "updatedAt": "2025-01-20T10:00:00.000Z",
+          "createdAt": "2025-01-01T10:00:00.000Z"
+        }
+      ]
+    }
+  }
+}
+
