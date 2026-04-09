@@ -10,8 +10,8 @@
     "type": "git",
     "url": "git+https://github.com/ominity/next.git"
   },
-  "license": "ISC",
-  "author": "Ominity <hello@ominity.com>",
+  "license": "BSD-2-Clause",
+  "author": "Ominity",
   "type": "module",
   "exports": {
     ".": {
