@@ -1,6 +1,9 @@
 import { CmsNormalizationError } from "./errors.js";
 import { normalizeLocaleCode, parseLocaleCode } from "./locales/index.js";
 import type {
+  CmsChannel,
+  CmsChannelCountry,
+  CmsChannelLanguage,
   CmsFieldValue,
   CmsLocale,
   CmsMenu,
@@ -83,6 +86,16 @@ function unwrapCollection(value: unknown, keys: ReadonlyArray<string>): Readonly
         return candidate;
       }
     }
+
+    const embedded = value._embedded;
+    if (isRecord(embedded)) {
+      for (const key of keys) {
+        const candidate = embedded[key];
+        if (Array.isArray(candidate)) {
+          return candidate;
+        }
+      }
+    }
   }
 
   return [];
@@ -103,13 +116,13 @@ function looksLikeComponent(value: UnknownRecord): boolean {
   return hasFields && hasTypeOrKey;
 }
 
-function normalizeFieldValue(value: unknown, fallbackIdPrefix: string): CmsFieldValue {
+export function normalizeCmsFieldValue(value: unknown, fallbackIdPrefix: string): CmsFieldValue {
   if (value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
     return value;
   }
 
   if (Array.isArray(value)) {
-    return value.map((item, index) => normalizeFieldValue(item, `${fallbackIdPrefix}[${index}]`));
+    return value.map((item, index) => normalizeCmsFieldValue(item, `${fallbackIdPrefix}[${index}]`));
   }
 
   if (!isRecord(value)) {
@@ -118,22 +131,22 @@ function normalizeFieldValue(value: unknown, fallbackIdPrefix: string): CmsField
 
   if (isPageContentComponentMarker(value)) {
     const nested = value.component ?? value.value ?? value.data ?? value;
-    return normalizeComponent(nested, fallbackIdPrefix);
+    return normalizeCmsComponent(nested, fallbackIdPrefix);
   }
 
   if (looksLikeComponent(value)) {
-    return normalizeComponent(value, fallbackIdPrefix);
+    return normalizeCmsComponent(value, fallbackIdPrefix);
   }
 
   const result: Record<string, CmsFieldValue> = {};
   for (const [key, entry] of Object.entries(value)) {
-    result[key] = normalizeFieldValue(entry, `${fallbackIdPrefix}.${key}`);
+    result[key] = normalizeCmsFieldValue(entry, `${fallbackIdPrefix}.${key}`);
   }
 
   return result;
 }
 
-function normalizeComponent(input: unknown, fallbackId: string): CmsPageComponent {
+export function normalizeCmsComponent(input: unknown, fallbackId: string): CmsPageComponent {
   const value = unwrapSingle(input, ["component", "item"]);
   if (!isRecord(value)) {
     throw new CmsNormalizationError("Unable to normalize CMS component", {
@@ -166,12 +179,12 @@ function normalizeComponent(input: unknown, fallbackId: string): CmsPageComponen
 
   const fields: Record<string, CmsFieldValue> = {};
   for (const [fieldKey, fieldValue] of Object.entries(fieldsRecord)) {
-    fields[fieldKey] = normalizeFieldValue(fieldValue, `${id}.${fieldKey}`);
+    fields[fieldKey] = normalizeCmsFieldValue(fieldValue, `${id}.${fieldKey}`);
   }
 
   const rawChildren = (value.children ?? value.components ?? value.child_components) as unknown;
   const childrenSource = asArray(rawChildren);
-  const children = childrenSource.map((child, index) => normalizeComponent(child, `${id}.children.${index}`));
+  const children = childrenSource.map((child, index) => normalizeCmsComponent(child, `${id}.children.${index}`));
 
   const meta = isRecord(value.meta) ? value.meta : undefined;
 
@@ -282,7 +295,9 @@ function normalizeSeo(input: unknown): CmsSeo | undefined {
 }
 
 export function normalizePage(input: unknown): CmsPage {
-  const value = unwrapSingle(input, ["page", "data", "item"]);
+  const collection = unwrapCollection(input, ["pages", "items", "data"]);
+  const source = collection.length > 0 ? collection[0] : input;
+  const value = unwrapSingle(source, ["page", "data", "item"]);
   if (!isRecord(value)) {
     throw new CmsNormalizationError("Unable to normalize CMS page", {
       details: {
@@ -298,7 +313,7 @@ export function normalizePage(input: unknown): CmsPage {
   );
 
   const rawComponents = value.components ?? value.page_content ?? value.content ?? value.body;
-  const components = asArray(rawComponents).map((entry, index) => normalizeComponent(entry, `root.${index}`));
+  const components = asArray(rawComponents).map((entry, index) => normalizeCmsComponent(entry, `root.${index}`));
 
   const rawTranslations = value.translations ?? value.localized_paths ?? value.localizations;
   const translations = asArray(rawTranslations)
@@ -317,6 +332,9 @@ export function normalizePage(input: unknown): CmsPage {
   const title = asString(value.title);
   const description = asString(value.description);
   const seo = normalizeSeo(value.seo ?? value.metadata);
+  const published = asBoolean(value.published);
+  const status = (asString(value.status) as CmsPage["status"] | undefined)
+    ?? (published === true ? "published" : published === false ? "draft" : "unknown");
 
   return {
     id: withDefaultId("page", path, asString(value.id) ?? asString(value.uuid) ?? asString(value._id)),
@@ -326,7 +344,7 @@ export function normalizePage(input: unknown): CmsPage {
     canonicalPath,
     ...(typeof title === "string" ? { title } : {}),
     ...(typeof description === "string" ? { description } : {}),
-    status: (asString(value.status) as CmsPage["status"] | undefined) ?? "unknown",
+    status,
     components,
     translations,
     ...(seo ? { seo } : {}),
@@ -443,24 +461,208 @@ export function normalizeRoutes(input: unknown): ReadonlyArray<CmsRoute> {
   });
 }
 
-export function normalizeLocales(input: unknown): ReadonlyArray<CmsLocale> {
-  const source = unwrapCollection(input, ["locales", "items", "data"]);
+function normalizeLocaleEntryFromLanguage(
+  value: UnknownRecord,
+  fallbackIndex: number,
+): CmsLocale {
+  const localeRecord = isRecord(value.locale)
+    ? value.locale
+    : isRecord(value._embedded) && isRecord(value._embedded.locale)
+      ? value._embedded.locale
+      : undefined;
+  const localeTerritory = localeRecord ? asString(localeRecord.territory) : undefined;
 
-  return source.map((entry, index) => {
-    const value = isRecord(entry) ? entry : {};
-    const code = normalizeLocaleCode(asString(value.code) ?? asString(value.locale) ?? "en");
+  const baseCode = asString(value.code) ?? asString(value.locale) ?? "en";
+  const code = normalizeLocaleCode(baseCode);
+  const parsed = parseLocaleCode(code);
+  const country = localeTerritory ?? parsed.country;
+  const label = asString(value.label) ?? asString(value.name);
+
+  return {
+    code,
+    language: parsed.language,
+    ...(typeof country === "string" ? { country } : {}),
+    ...(typeof label === "string" ? { label } : {}),
+    default: asBoolean(value.default) ?? fallbackIndex === 0,
+  };
+}
+
+function normalizeLocaleEntriesFromLocale(value: UnknownRecord): ReadonlyArray<CmsLocale> {
+  const languages = asArray(value.languages ?? (isRecord(value._embedded) ? value._embedded.languages : undefined));
+  if (languages.length === 0) {
+    const code = normalizeLocaleCode(asString(value.code) ?? "en");
     const parsed = parseLocaleCode(code);
-    const country = asString(value.country) ?? parsed.country;
+    const territory = asString(value.territory) ?? parsed.country;
     const label = asString(value.label) ?? asString(value.name);
 
-    return {
+    return [{
       code,
-      language: asString(value.language) ?? parsed.language,
-      ...(typeof country === "string" ? { country } : {}),
+      language: parsed.language,
+      ...(typeof territory === "string" ? { country: territory } : {}),
       ...(typeof label === "string" ? { label } : {}),
       default: asBoolean(value.default) ?? false,
-    };
+    }];
+  }
+
+  return languages.flatMap((language, index): CmsLocale[] => {
+    if (!isRecord(language)) {
+      return [];
+    }
+
+    const base = normalizeLocaleEntryFromLanguage(language, index);
+    const territory = asString(value.territory) ?? base.country;
+    return [{
+      ...base,
+      ...(typeof territory === "string" ? { country: territory } : {}),
+    }];
   });
+}
+
+export function normalizeLocales(input: unknown): ReadonlyArray<CmsLocale> {
+  const source = unwrapCollection(input, ["locales", "languages", "items", "data"]);
+  const locales = source.flatMap((entry, index): CmsLocale[] => {
+    if (!isRecord(entry)) {
+      return [];
+    }
+
+    const resource = asString(entry.resource);
+    if (resource === "locale") {
+      return [...normalizeLocaleEntriesFromLocale(entry)];
+    }
+
+    return [normalizeLocaleEntryFromLanguage(entry, index)];
+  });
+
+  const unique = new Map<string, CmsLocale>();
+  for (const locale of locales) {
+    unique.set(locale.code, locale);
+  }
+
+  return Array.from(unique.values());
+}
+
+function normalizeChannelLanguage(input: unknown): CmsChannelLanguage | null {
+  if (!isRecord(input)) {
+    return null;
+  }
+
+  const code = asString(input.code);
+  const name = asString(input.name);
+  if (!code || !name) {
+    return null;
+  }
+
+  const localeRecord = isRecord(input.locale)
+    ? input.locale
+    : isRecord(input._embedded) && isRecord(input._embedded.locale)
+      ? input._embedded.locale
+      : undefined;
+  const direction = asString(input.direction);
+  const localeCode = localeRecord ? asString(localeRecord.code) : undefined;
+  const localeTerritory = localeRecord ? asString(localeRecord.territory) : undefined;
+  const isActive = asBoolean(input.isActive);
+
+  return {
+    id: withDefaultId("channel-language", code, asString(input.id)),
+    code: normalizeLocaleCode(code),
+    name,
+    ...(typeof direction === "string" ? { direction } : {}),
+    ...(typeof localeCode === "string" ? { localeCode: normalizeLocaleCode(localeCode) } : {}),
+    ...(typeof localeTerritory === "string" ? { localeTerritory } : {}),
+    ...(typeof isActive === "boolean" ? { active: isActive } : {}),
+  };
+}
+
+function normalizeChannelCountry(input: unknown): CmsChannelCountry | null {
+  if (!isRecord(input)) {
+    return null;
+  }
+
+  const code = asString(input.code);
+  const name = asString(input.name);
+  if (!code || !name) {
+    return null;
+  }
+  const language = asString(input.language);
+  const isEnabled = asBoolean(input.isEnabled);
+
+  return {
+    code: code.toUpperCase(),
+    name,
+    ...(typeof language === "string" ? { language } : {}),
+    ...(typeof isEnabled === "boolean" ? { enabled: isEnabled } : {}),
+  };
+}
+
+export function normalizeChannel(input: unknown): CmsChannel {
+  const value = unwrapSingle(input, ["channel", "data", "item"]);
+  if (!isRecord(value)) {
+    throw new CmsNormalizationError("Unable to normalize CMS channel", {
+      details: {
+        input,
+      },
+    });
+  }
+
+  const idRaw = asString(value.id);
+  const identifier = asString(value.identifier);
+  const name = asString(value.name);
+
+  if (!idRaw || !identifier || !name) {
+    throw new CmsNormalizationError("CMS channel payload is missing required fields", {
+      details: {
+        id: value.id,
+        identifier: value.identifier,
+        name: value.name,
+      },
+    });
+  }
+
+  const languages = asArray(value.languages ?? (isRecord(value._embedded) ? value._embedded.languages : undefined))
+    .map((entry) => normalizeChannelLanguage(entry))
+    .filter((entry): entry is CmsChannelLanguage => entry !== null);
+  const countries = asArray(value.countries ?? (isRecord(value._embedded) ? value._embedded.countries : undefined))
+    .map((entry) => normalizeChannelCountry(entry))
+    .filter((entry): entry is CmsChannelCountry => entry !== null);
+
+  const defaultLanguage = isRecord(value.defaultLanguage)
+    ? value.defaultLanguage
+    : isRecord(value._embedded) && isRecord(value._embedded.default_language)
+      ? value._embedded.default_language
+      : undefined;
+  const defaultCountry = isRecord(value.defaultCountry)
+    ? value.defaultCountry
+    : isRecord(value._embedded) && isRecord(value._embedded.default_country)
+      ? value._embedded.default_country
+      : undefined;
+
+  const defaultLanguageCode = defaultLanguage ? asString(defaultLanguage.code) : undefined;
+  const defaultCountryCode = defaultCountry ? asString(defaultCountry.code) : undefined;
+  const normalizedDefaultLanguageCode = defaultLanguageCode ? normalizeLocaleCode(defaultLanguageCode) : undefined;
+  const normalizedDefaultCountryCode = defaultCountryCode ? defaultCountryCode.toUpperCase() : undefined;
+
+  const normalizedLanguages = languages.map((language) => ({
+    ...language,
+    ...(normalizedDefaultLanguageCode && language.code === normalizedDefaultLanguageCode
+      ? { default: true }
+      : {}),
+  }));
+  const normalizedCountries = countries.map((country) => ({
+    ...country,
+    ...(normalizedDefaultCountryCode && country.code === normalizedDefaultCountryCode
+      ? { default: true }
+      : {}),
+  }));
+
+  return {
+    id: idRaw,
+    identifier,
+    name,
+    ...(normalizedDefaultLanguageCode ? { defaultLanguageCode: normalizedDefaultLanguageCode } : {}),
+    ...(normalizedDefaultCountryCode ? { defaultCountryCode: normalizedDefaultCountryCode } : {}),
+    languages: normalizedLanguages,
+    countries: normalizedCountries,
+  };
 }
 
 export const defaultCmsNormalizers: CmsResponseNormalizers = {
@@ -468,4 +670,5 @@ export const defaultCmsNormalizers: CmsResponseNormalizers = {
   routes: normalizeRoutes,
   menus: normalizeMenus,
   locales: normalizeLocales,
+  channel: normalizeChannel,
 };

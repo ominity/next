@@ -6,8 +6,9 @@
 
 1. **CMS layer (`src/cms`)**
    - wraps `@ominity/api-typescript`
-   - fetches pages/routes/menus/locales
+   - fetches pages/routes/menus/locales/channel
    - normalizes unstable API payloads into stable internal models
+   - merges channel language/country/default configuration into locale output
    - provides routing and locale utilities
    - provides CMS-focused metadata helpers
 
@@ -28,6 +29,12 @@
    - submission handler for App Router API routes
    - form response normalization + optional adapter-based SDK integration
    - theme + component override surfaces (shadcn-friendly)
+
+5. **Commerce/Auth utilities (`src/commerce`, `src/auth`)**
+   - commerce client wrapper around SDK operations (carts, items, shipping, payment methods, orders, payments)
+   - stable commerce model normalization for app-layer predictability
+   - SDK-backed auth client for OAuth2, MFA, recovery codes, password reset, OAuth accounts, and user customers
+   - signed auth session helpers for cookie-based server flows
 
 ## Design principles
 

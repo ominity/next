@@ -7,10 +7,19 @@ settings:
 importers:
 
   .:
-    dependencies:
+    devDependencies:
+      '@eslint/js':
+        specifier: ^9.0.0
+        version: 9.39.4
       '@ominity/api-typescript':
-        specifier: '*'
-        version: 0.0.3
+        specifier: ^1.1.1
+        version: 1.1.1
+      eslint:
+        specifier: ^9.0.0
+        version: 9.39.4
+      globals:
+        specifier: ^15.0.0
+        version: 15.15.0
       next:
         specifier: ^16.2.3
         version: 16.2.3(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
@@ -21,18 +30,8 @@ importers:
         specifier: ^19.2.5
         version: 19.2.5(react@19.2.5)
       react-hook-form:
-        specifier: ^7.0.0
+        specifier: ^7.56.4
         version: 7.72.1(react@19.2.5)
-    devDependencies:
-      '@eslint/js':
-        specifier: ^9.0.0
-        version: 9.39.4
-      eslint:
-        specifier: ^9.0.0
-        version: 9.39.4
-      globals:
-        specifier: ^15.0.0
-        version: 15.15.0
       typescript:
         specifier: ^5.8.0
         version: 5.9.3
@@ -307,8 +306,8 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@ominity/api-typescript@0.0.3':
-    resolution: {integrity: sha512-5pP7vJ9g0X1v2Z1qbSOCP3VFS3Dz41SQasRLAVyyor9nFAdeb3gnxabtbSIyJVcPsUkimsn7kpvv96ukBvQ55A==}
+  '@ominity/api-typescript@1.1.1':
+    resolution: {integrity: sha512-EB+LbQL6j36CJO9Uyb5y75/XsH4V6itBLQWhFVp+UlCJWatY1IWpkgPB82hiXtrc7bFlTaouKxV7f/e/32iJAg==}
 
   '@swc/helpers@0.5.15':
     resolution: {integrity: sha512-JQ5TuMi45Owi4/BIMAJBoSQoOJu12oOk/gADqlcUL9JEdHB8vyjUSsxqeNXnmXHjYKMi2WcYtezGEEhqUI/E2g==}
@@ -995,7 +994,7 @@ snapshots:
   '@next/swc-win32-x64-msvc@16.2.3':
     optional: true
 
-  '@ominity/api-typescript@0.0.3':
+  '@ominity/api-typescript@1.1.1':
     dependencies:
       zod: 4.3.6
 

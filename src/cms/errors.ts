@@ -6,7 +6,11 @@ export type OminityNextErrorCode =
   | "ROUTE_RESOLUTION_FAILED"
   | "REGISTRY_DUPLICATE_KEY"
   | "REGISTRY_MISSING_COMPONENT"
-  | "RENDER_FAILED";
+  | "RENDER_FAILED"
+  | "COMMERCE_CLIENT_FAILED"
+  | "COMMERCE_NORMALIZATION_FAILED"
+  | "AUTH_CLIENT_FAILED"
+  | "AUTH_RESPONSE_INVALID";
 
 export interface OminityNextErrorDetails {
   readonly [key: string]: unknown;
@@ -86,5 +90,38 @@ export class CmsRenderError extends OminityNextError {
       ...(typeof options.details !== "undefined" ? { details: options.details } : {}),
     });
     this.name = "CmsRenderError";
+  }
+}
+
+export class CommerceClientError extends OminityNextError {
+  public constructor(message: string, options: { cause?: unknown; details?: OminityNextErrorDetails } = {}) {
+    super(message, {
+      code: "COMMERCE_CLIENT_FAILED",
+      ...(typeof options.cause !== "undefined" ? { cause: options.cause } : {}),
+      ...(typeof options.details !== "undefined" ? { details: options.details } : {}),
+    });
+    this.name = "CommerceClientError";
+  }
+}
+
+export class CommerceNormalizationError extends OminityNextError {
+  public constructor(message: string, options: { cause?: unknown; details?: OminityNextErrorDetails } = {}) {
+    super(message, {
+      code: "COMMERCE_NORMALIZATION_FAILED",
+      ...(typeof options.cause !== "undefined" ? { cause: options.cause } : {}),
+      ...(typeof options.details !== "undefined" ? { details: options.details } : {}),
+    });
+    this.name = "CommerceNormalizationError";
+  }
+}
+
+export class AuthClientError extends OminityNextError {
+  public constructor(message: string, options: { cause?: unknown; details?: OminityNextErrorDetails } = {}) {
+    super(message, {
+      code: "AUTH_CLIENT_FAILED",
+      ...(typeof options.cause !== "undefined" ? { cause: options.cause } : {}),
+      ...(typeof options.details !== "undefined" ? { details: options.details } : {}),
+    });
+    this.name = "AuthClientError";
   }
 }

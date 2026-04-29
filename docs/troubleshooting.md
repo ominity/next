@@ -72,6 +72,26 @@ Fix:
 - pass the result via `components` prop on `FormRenderer`
 - ensure prop signatures are compatible with standard HTML input props
 
+### Auth session cookie cannot be read
+
+Cause: signed cookie secret mismatch or missing `sessionSecret`.
+
+Fix:
+
+- use the same `sessionSecret` for both write/read paths
+- ensure secret length is at least 32 characters
+- if using unsigned cookies for local testing, set `allowUnsigned: true` explicitly
+
+### OAuth2 or MFA calls fail unexpectedly
+
+Cause: wrong API credentials, channel, or auth context for protected endpoints.
+
+Fix:
+
+- verify SDK `security` configuration (API key / bearer security)
+- verify endpoint context (`/oauth2/*` vs `/users/*`)
+- enable auth debug logs on `createAuthClient({ debug: { enabled: true } })`
+
 ## Typed errors
 
 Primary error classes:
@@ -81,5 +101,6 @@ Primary error classes:
 - `CmsRouteResolutionError`
 - `CmsRegistryError`
 - `CmsRenderError`
+- `AuthClientError`
 
 All include consistent `code` values for observability and alerting.

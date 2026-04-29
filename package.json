@@ -1,6 +1,6 @@
 {
   "name": "@ominity/next",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "description": "Next.js App Router integration layer for Ominity CMS.",
   "homepage": "https://github.com/ominity/next#readme",
   "bugs": {
@@ -34,6 +34,14 @@
       "types": "./dist/forms/index.d.ts",
       "default": "./dist/forms/index.js"
     },
+    "./commerce": {
+      "types": "./dist/commerce/index.d.ts",
+      "default": "./dist/commerce/index.js"
+    },
+    "./auth": {
+      "types": "./dist/auth/index.d.ts",
+      "default": "./dist/auth/index.js"
+    },
     "./package.json": "./package.json"
   },
   "main": "./dist/index.js",
@@ -47,31 +55,36 @@
     "README.md",
     "docs"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "sideEffects": false,
   "scripts": {
     "clean": "rm -rf dist",
     "build": "pnpm clean && tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint src",
-    "test": "pnpm build && node --test tests/**/*.test.mjs"
-  },
-  "dependencies": {
-    "next": "^16.2.3",
-    "react": "^19.2.5",
-    "react-dom": "^19.2.5"
+    "test": "pnpm build && node --test tests/**/*.test.mjs",
+    "prepublishOnly": "pnpm test"
   },
   "devDependencies": {
-    "typescript": "^5.8.0",
-    "eslint": "^9.0.0",
     "@eslint/js": "^9.0.0",
+    "@ominity/api-typescript": "^1.1.1",
+    "eslint": "^9.0.0",
     "globals": "^15.0.0",
+    "next": "^16.2.3",
+    "react": "^19.2.5",
+    "react-dom": "^19.2.5",
+    "react-hook-form": "^7.56.4",
+    "typescript": "^5.8.0",
     "typescript-eslint": "^8.0.0"
   },
   "peerDependencies": {
+    "@ominity/api-typescript": "^1.1.1",
     "next": "^15.0.0 || ^16.0.0",
     "react": "^18.0.0 || ^19.0.0",
     "react-dom": "^18.0.0 || ^19.0.0",
-    "react-hook-form": "^7.0.0",
-    "@ominity/api-typescript": "*"
+    "react-hook-form": "^7.0.0"
   },
   "peerDependenciesMeta": {
     "react-hook-form": {

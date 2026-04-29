@@ -28,6 +28,8 @@ export const routing = createRoutingConfig({
 });
 ```
 
+For channel-driven projects, fetch locales via `cmsClient.getLocales()` and pass that list to `createRoutingConfig` so channel language/country/default settings drive route matching.
+
 ## Translated slug resolution
 
 Resolver behavior:

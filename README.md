@@ -7,6 +7,7 @@ Production-ready Next.js App Router integration layer for Ominity CMS.
 - **CMS integration**: stable models + API client normalization around `@ominity/api-typescript`
 - **Rendering engine**: generic, recursive CMS component rendering with a project-owned component registry
 - **Next helpers**: route resolution, static params, metadata, sitemap, and draft mode utilities
+- **Commerce/Auth utilities**: API-first commerce client and SDK-backed OAuth2/auth helpers
 
 This package does **not** include project UI components. Each consuming website owns its own React components and visual design.
 
@@ -25,7 +26,7 @@ CMS-driven websites often need the same foundation repeatedly:
 ## Install
 
 ```bash
-pnpm add @ominity/next @ominity/api-typescript
+pnpm add @ominity/next @ominity/api-typescript@^1.1.1
 ```
 
 If you use forms rendering, also install:
@@ -54,12 +55,15 @@ export const cmsClient = createCmsClient({
       apiKey: process.env.OMINITY_API_KEY ?? "",
     },
     language: "en",
+    channelId: process.env.OMINITY_CHANNEL_ID,
   },
   debug: {
     enabled: process.env.NODE_ENV !== "production",
   },
 });
 ```
+
+`getLocales()` now resolves languages through `/localization/languages` and merges channel defaults (`/channels/current`) when available.
 
 ### 2) Define your project registry
 
@@ -136,6 +140,40 @@ This package does not force one rendering mode.
 
 Client Components can be nested inside rendered CMS pages without making the whole route client-rendered.
 
+## Auth (server-side)
+
+`@ominity/next/auth` now provides a robust server-first auth layer on top of `@ominity/api-typescript@^1.1.1`:
+
+- OAuth2 token issuance (`password`, `refresh_token`, and other supported grants)
+- user access token issuance (`users/{id}/token`)
+- MFA method flows (list/get/enable/disable/send/validate)
+- recovery code flows (list/regenerate/validate)
+- user OAuth account and customer lookups
+- password reset link + password reset helpers
+- signed auth session cookies (`sealAuthSession` / `unsealAuthSession`)
+
+Example:
+
+```ts
+import { createAuthClient } from "@ominity/next/auth";
+
+const auth = createAuthClient({
+  sdk: {
+    serverURL: process.env.OMINITY_API_URL ?? "",
+    security: {
+      apiKey: process.env.OMINITY_API_KEY ?? "",
+    },
+  },
+});
+
+const token = await auth.issuePasswordToken({
+  username: "john@example.com",
+  password: "secret",
+  clientId: process.env.OMINITY_OAUTH_CLIENT_ID ?? "",
+  clientSecret: process.env.OMINITY_OAUTH_CLIENT_SECRET ?? "",
+});
+```
+
 ## Locale-aware links
 
 `createCmsLinkResolver` accepts route objects or string links.
@@ -209,6 +247,8 @@ export const POST = (request: Request) => handler(request);
 - `@ominity/next/rendering` – registry + recursive renderer
 - `@ominity/next/next` – App Router integration helpers
 - `@ominity/next/forms` – Ominity forms renderer + submit helpers
+- `@ominity/next/commerce` – SDK-backed commerce client + normalized cart/order/payment models
+- `@ominity/next/auth` – SDK-backed OAuth2, MFA, recovery code, password reset, and signed sessions
 
 ## Documentation
 
@@ -220,6 +260,7 @@ export const POST = (request: Request) => handler(request);
 - `docs/ssg-isr-ssr.md`
 - `docs/examples.md`
 - `docs/forms.md`
+- `docs/auth.md`
 - `docs/troubleshooting.md`
 
 ## Development

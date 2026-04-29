@@ -102,6 +102,35 @@ export interface CmsLocale {
   readonly default?: boolean;
 }
 
+export interface CmsChannelLanguage {
+  readonly id: string;
+  readonly code: string;
+  readonly name: string;
+  readonly direction?: string;
+  readonly localeCode?: string;
+  readonly localeTerritory?: string;
+  readonly active?: boolean;
+  readonly default?: boolean;
+}
+
+export interface CmsChannelCountry {
+  readonly code: string;
+  readonly name: string;
+  readonly language?: string;
+  readonly enabled?: boolean;
+  readonly default?: boolean;
+}
+
+export interface CmsChannel {
+  readonly id: string;
+  readonly identifier: string;
+  readonly name: string;
+  readonly defaultLanguageCode?: string;
+  readonly defaultCountryCode?: string;
+  readonly languages: ReadonlyArray<CmsChannelLanguage>;
+  readonly countries: ReadonlyArray<CmsChannelCountry>;
+}
+
 export interface CmsRenderContext {
   readonly page: CmsPage;
   readonly locale: string;
@@ -124,6 +153,7 @@ export interface CmsMetadataInput {
 export interface CmsClientRequestContext {
   readonly locale?: string;
   readonly preview?: boolean;
+  readonly channelId?: string;
   readonly requestId?: string;
 }
 
@@ -132,6 +162,7 @@ export interface CmsClientQueryParams {
   readonly locale?: string;
   readonly preview?: boolean;
   readonly key?: string;
+  readonly include?: string;
 }
 
 export interface CmsClientEndpoints {
@@ -139,6 +170,7 @@ export interface CmsClientEndpoints {
   readonly routes: string;
   readonly menus: string;
   readonly locales: string;
+  readonly channelCurrent: string;
 }
 
 export interface CmsClientQueryParamNames {
@@ -146,6 +178,7 @@ export interface CmsClientQueryParamNames {
   readonly locale: string;
   readonly preview: string;
   readonly menuKey: string;
+  readonly include: string;
 }
 
 export interface CmsClientDebugOptions {
@@ -172,12 +205,11 @@ export interface CmsResponseNormalizers {
   readonly routes: (input: unknown) => ReadonlyArray<CmsRoute>;
   readonly menus: (input: unknown) => ReadonlyArray<CmsMenu>;
   readonly locales: (input: unknown) => ReadonlyArray<CmsLocale>;
+  readonly channel: (input: unknown) => CmsChannel;
 }
 
 export interface CmsClientOptions {
-  readonly sdk: Omit<OminityOptions, "language"> & {
-    readonly language?: string;
-  };
+  readonly sdk: OminityOptions;
   readonly endpoints?: Partial<CmsClientEndpoints>;
   readonly queryParamNames?: Partial<CmsClientQueryParamNames>;
   readonly normalizers?: Partial<CmsResponseNormalizers>;
@@ -188,19 +220,29 @@ export interface CmsGetPageByPathInput extends CmsClientRequestContext {
   readonly path: string;
 }
 
-export interface CmsGetRoutesInput extends CmsClientRequestContext {}
+export interface CmsGetRoutesInput extends CmsClientRequestContext {
+  readonly include?: string;
+}
 
 export interface CmsGetMenusInput extends CmsClientRequestContext {
   readonly key?: string;
+  readonly include?: string;
 }
 
-export interface CmsGetLocalesInput extends CmsClientRequestContext {}
+export interface CmsGetLocalesInput extends CmsClientRequestContext {
+  readonly include?: string;
+}
+
+export interface CmsGetChannelInput extends CmsClientRequestContext {
+  readonly include?: string;
+}
 
 export interface CmsClient {
   readonly sdkLanguage?: string;
+  readonly sdkChannelId?: string;
   getPageByPath(input: CmsGetPageByPathInput): Promise<CmsPage | null>;
   getRoutes(input?: CmsGetRoutesInput): Promise<ReadonlyArray<CmsRoute>>;
   getMenus(input?: CmsGetMenusInput): Promise<ReadonlyArray<CmsMenu>>;
   getLocales(input?: CmsGetLocalesInput): Promise<ReadonlyArray<CmsLocale>>;
+  getChannel(input?: CmsGetChannelInput): Promise<CmsChannel | null>;
 }
-
