@@ -102,7 +102,7 @@ function unwrapCollection(value: unknown, keys: ReadonlyArray<string>): Readonly
 }
 
 function isPageContentComponentMarker(value: UnknownRecord): boolean {
-  const marker = value.type ?? value._type ?? value.kind ?? value.content_type;
+  const marker = value.type ?? value._type ?? value.kind ?? value.content_type ?? value.resource;
   return marker === "page_content_component";
 }
 
@@ -110,6 +110,7 @@ function looksLikeComponent(value: UnknownRecord): boolean {
   const hasFields = isRecord(value.fields ?? value.data ?? value.props ?? value.values);
   const hasTypeOrKey = typeof value.type === "string"
     || typeof value.key === "string"
+    || typeof value.component === "string"
     || typeof value.component_type === "string"
     || typeof value.component_key === "string";
 
@@ -130,7 +131,7 @@ export function normalizeCmsFieldValue(value: unknown, fallbackIdPrefix: string)
   }
 
   if (isPageContentComponentMarker(value)) {
-    const nested = value.component ?? value.value ?? value.data ?? value;
+    const nested = isRecord(value.component) ? value.component : (value.value ?? value.data ?? value);
     return normalizeCmsComponent(nested, fallbackIdPrefix);
   }
 
@@ -147,7 +148,9 @@ export function normalizeCmsFieldValue(value: unknown, fallbackIdPrefix: string)
 }
 
 export function normalizeCmsComponent(input: unknown, fallbackId: string): CmsPageComponent {
-  const value = unwrapSingle(input, ["component", "item"]);
+  const value = isRecord(input) && isRecord(input.component)
+    ? unwrapSingle(input, ["component", "item"])
+    : unwrapSingle(input, ["item"]);
   if (!isRecord(value)) {
     throw new CmsNormalizationError("Unable to normalize CMS component", {
       details: {
@@ -165,11 +168,13 @@ export function normalizeCmsComponent(input: unknown, fallbackId: string): CmsPa
   const key = asString(value.key)
     ?? asString(value.component_key)
     ?? asString(value.componentKey)
+    ?? asString(value.component)
     ?? asString(value.type)
     ?? asString(value.component_type)
     ?? "unknown";
 
   const type = asString(value.type)
+    ?? asString(value.component)
     ?? asString(value.component_type)
     ?? asString(value.componentType)
     ?? key;
