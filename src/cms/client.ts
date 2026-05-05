@@ -93,9 +93,8 @@ function buildQuery(
     }
   }
 
-  if (params.locale) {
-    query[queryParamNames.locale] = params.locale;
-  }
+  // Locale is sent via Accept-Language headers.
+  // API endpoints do not rely on a `locale` query parameter.
 
   if (typeof params.preview === "boolean") {
     query[queryParamNames.preview] = params.preview ? "true" : "false";
@@ -149,7 +148,7 @@ async function parseResponseBody(response: Response): Promise<unknown> {
   }
 
   const contentType = response.headers.get("content-type") ?? "";
-  if (contentType.includes("application/json")) {
+  if (contentType.toLowerCase().includes("json")) {
     return response.json();
   }
 
