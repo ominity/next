@@ -627,13 +627,17 @@ export function normalizeChannel(input: unknown): CmsChannel {
 
   const defaultLanguage = isRecord(value.defaultLanguage)
     ? value.defaultLanguage
-    : isRecord(value._embedded) && isRecord(value._embedded.default_language)
-      ? value._embedded.default_language
+    : isRecord(value._embedded) && isRecord(value._embedded.defaultLanguage)
+      ? value._embedded.defaultLanguage
+      : isRecord(value._embedded) && isRecord(value._embedded.default_language)
+        ? value._embedded.default_language
       : undefined;
   const defaultCountry = isRecord(value.defaultCountry)
     ? value.defaultCountry
-    : isRecord(value._embedded) && isRecord(value._embedded.default_country)
-      ? value._embedded.default_country
+    : isRecord(value._embedded) && isRecord(value._embedded.defaultCountry)
+      ? value._embedded.defaultCountry
+      : isRecord(value._embedded) && isRecord(value._embedded.default_country)
+        ? value._embedded.default_country
       : undefined;
 
   const defaultLanguageCode = defaultLanguage ? asString(defaultLanguage.code) : undefined;

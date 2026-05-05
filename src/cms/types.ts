@@ -218,6 +218,7 @@ export interface CmsClientOptions {
 
 export interface CmsGetPageByPathInput extends CmsClientRequestContext {
   readonly path: string;
+  readonly include?: string;
 }
 
 export interface CmsGetRoutesInput extends CmsClientRequestContext {

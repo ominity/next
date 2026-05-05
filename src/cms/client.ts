@@ -16,7 +16,8 @@ import type {
   CmsResponseNormalizers,
 } from "./types.js";
 
-const DEFAULT_CHANNEL_INCLUDE = "languages,countries,default_language,default_country";
+const DEFAULT_CHANNEL_INCLUDE = "languages,countries,currencies,defaultLanguage,defaultCountry,defaultCurrency";
+const DEFAULT_PAGE_INCLUDE = "content";
 
 const defaultEndpoints: CmsClientEndpoints = {
   pageByPath: "/cms/pages",
@@ -131,6 +132,15 @@ function buildHeaders(input: {
   }
 
   return headers;
+}
+
+function asNonEmptyString(value: string | undefined): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
 }
 
 async function parseResponseBody(response: Response): Promise<unknown> {
@@ -495,12 +505,14 @@ export function createCmsClient(options: CmsClientOptions): CmsClient {
     ...(typeof options.sdk.channelId === "string" ? { sdkChannelId: options.sdk.channelId } : {}),
 
     async getPageByPath(input) {
+      const include = asNonEmptyString(input.include) ?? DEFAULT_PAGE_INCLUDE;
       const response = await requestJson(
         endpoints.pageByPath,
         {
           path: input.path,
           ...(typeof input.locale === "string" ? { locale: input.locale } : {}),
           ...(typeof input.preview === "boolean" ? { preview: input.preview } : {}),
+          include,
         },
         {
           ...(typeof input.locale === "string" ? { locale: input.locale } : {}),
