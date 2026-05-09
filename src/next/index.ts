@@ -6,3 +6,4 @@ export * from "./sitemap.js";
 export * from "./draft-mode.js";
 export * from "./auth.js";
 export * from "./commerce.js";
+export * from "./home-locale-redirect.js";

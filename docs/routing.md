@@ -44,6 +44,43 @@ Resolver behavior:
 - `if-not-canonical`: redirect `/nl/contact-us` → `/nl/contacteer-ons`
 - `never`: keep route valid without forced redirect
 
+## Optional Home Locale Redirect
+
+Use `resolveHomeLocaleRedirect` when you want `/` to redirect to the best locale URL for the current visitor.
+
+Supported modes:
+
+- `off`
+- `accept-language`
+- `cookie-accept-language`
+- `geo-cookie-accept-language`
+
+Example:
+
+```ts
+import { resolveHomeLocaleRedirect } from "@ominity/next/next";
+
+const homeRedirect = resolveHomeLocaleRedirect({
+  incomingPath: "/",
+  routing,
+  mode: "cookie-accept-language",
+  cookieHeader: request.headers.get("cookie"),
+  acceptLanguageHeader: request.headers.get("accept-language"),
+  userAgentHeader: request.headers.get("user-agent"),
+});
+
+if (homeRedirect) {
+  // In Next.js App Router pages:
+  // redirect(homeRedirect.destinationPath);
+}
+```
+
+Recommended SEO defaults:
+
+- keep this behavior optional (`off` by default)
+- skip bots/crawlers
+- use temporary redirects (302/307), not permanent
+
 ## Locale-aware link building
 
 Use `createCmsLinkResolver` to generate localized hrefs from route objects or strings.
