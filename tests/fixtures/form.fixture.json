@@ -75,9 +75,43 @@
           "order": 2,
           "updatedAt": "2025-01-20T10:00:00.000Z",
           "createdAt": "2025-01-01T10:00:00.000Z"
+        },
+        {
+          "resource": "form_field",
+          "id": 203,
+          "formId": 101,
+          "type": "recaptcha",
+          "name": "recaptcha",
+          "label": "reCAPTCHA",
+          "isLabelVisible": true,
+          "placeholder": "",
+          "helper": "",
+          "defaultValue": null,
+          "width": null,
+          "isInline": false,
+          "css": {
+            "classes": null,
+            "id": null,
+            "style": null
+          },
+          "validation": {
+            "isRequired": true,
+            "minLength": null,
+            "maxLength": null,
+            "rules": [],
+            "message": ""
+          },
+          "options": {
+            "version": "v3",
+            "siteKey": "public-site-key",
+            "minimumScore": 0.5,
+            "expectedAction": "form_submit"
+          },
+          "order": 3,
+          "updatedAt": "2025-01-20T10:00:00.000Z",
+          "createdAt": "2025-01-01T10:00:00.000Z"
         }
       ]
     }
   }
 }
-

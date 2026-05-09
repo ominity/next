@@ -60,7 +60,7 @@ Fix:
 
 - verify `/api/forms/submit` route is wired with `createOminityFormSubmitHandler`
 - verify `OMINITY_API_KEY` / API base URL env vars
-- if using reCAPTCHA, verify secret and client site key pairing
+- if using reCAPTCHA, verify form field options expose a valid site key and backend verification is configured in Ominity CMS
 
 ### Forms render but custom UI is ignored
 

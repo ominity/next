@@ -36,6 +36,7 @@ import {
   needsClientIp,
 } from "./utils/metadata.js";
 import { useRecaptcha } from "./recaptcha/useRecaptcha.js";
+import { resolveFormRecaptchaConfig } from "./recaptcha/config.js";
 import type { SubmitResult, SubmissionPayload } from "./types.js";
 import {
   FieldError,
@@ -378,7 +379,11 @@ const FormRenderer = <T,>({
     });
   }, [metadataFields, metadataValues, setValue]);
 
-  const recaptchaControl = useRecaptcha(recaptcha);
+  const resolvedRecaptcha = useMemo(
+    () => resolveFormRecaptchaConfig(form, recaptcha),
+    [form, recaptcha],
+  );
+  const recaptchaControl = useRecaptcha(resolvedRecaptcha);
 
   const getSlotClass = (slot: ThemeSlot, field?: OminityFormField): string =>
     resolveSlotClasses({
@@ -419,7 +424,7 @@ const FormRenderer = <T,>({
     }
 
     let recaptchaToken: string | null = null;
-    if (recaptcha) {
+    if (resolvedRecaptcha) {
       recaptchaToken = await recaptchaControl.execute();
       if (!recaptchaToken) {
         setSubmissionError("Complete the security check.");
@@ -752,10 +757,10 @@ const FormRenderer = <T,>({
         </FormRow>
       ))}
       {renderAfterFields}
-      {recaptcha && recaptcha.version !== "v3" && (
+      {resolvedRecaptcha && resolvedRecaptcha.version !== "v3" && (
         <div
           ref={recaptchaControl.containerRef}
-          data-recaptcha-version={recaptcha.version}
+          data-recaptcha-version={resolvedRecaptcha.version}
         />
       )}
       <FieldError

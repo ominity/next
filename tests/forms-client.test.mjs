@@ -37,8 +37,8 @@ test("createFormsClient fetches and normalizes form by id", async () => {
 
   const form = await client.getFormById({
     formId: 101,
-    include: "form_fields",
-    locale: "nl",
+    include: "fields",
+    locale: "nl-BE",
   });
 
   assert.ok(form);
@@ -47,7 +47,7 @@ test("createFormsClient fetches and normalizes form by id", async () => {
 
   const requestUrl = new URL(calls[0].input);
   assert.equal(requestUrl.pathname, "/api/v1/modules/forms/101");
-  assert.equal(requestUrl.searchParams.get("include"), "form_fields");
+  assert.equal(requestUrl.searchParams.get("include"), "fields");
   assert.equal(requestUrl.searchParams.get("preview"), null);
   assert.equal(calls[0].init.headers.get("Authorization"), "Bearer secret");
   assert.equal(calls[0].init.headers.get("Accept-Language"), "nl");
@@ -69,4 +69,3 @@ test("createFormsClient supports adapter usage (optional SDK module path)", asyn
   assert.ok(form);
   assert.equal(form.name, "contact");
 });
-

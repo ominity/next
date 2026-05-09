@@ -2,6 +2,7 @@ import { createFormsDebugLogger, type FormsClientDebugOptions } from "./debug.js
 import { FormsClientError } from "./errors.js";
 import { defaultFormsNormalizers } from "./normalize.js";
 import type { OminityForm, SubmissionPayload } from "./types.js";
+import { resolveApiLanguage } from "../cms/market.js";
 
 const DEFAULT_FORMS_BASE_URL = "https://demo.ominity.com/api";
 
@@ -95,8 +96,9 @@ function buildCommonHeaders(options: {
     headers.set("Authorization", `Bearer ${options.apiKey}`);
   }
 
-  if (options.locale) {
-    headers.set("Accept-Language", options.locale);
+  const language = resolveApiLanguage(options.locale);
+  if (language) {
+    headers.set("Accept-Language", language);
   }
 
   if (options.requestId) {

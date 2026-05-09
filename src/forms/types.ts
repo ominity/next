@@ -11,6 +11,7 @@ export type FormFieldType =
   | "hidden"
   | "metadata"
   | "honeypot"
+  | "recaptcha"
   | "button";
 
 export type MetadataFieldOption =
@@ -48,6 +49,11 @@ export interface FieldOption {
   order?: number;
 }
 
+export type FieldOptionsValue =
+  | Array<FieldOption>
+  | Array<string>
+  | Record<string, unknown>;
+
 export interface OminityFormField {
   resource: "form_field";
   id: number;
@@ -63,7 +69,7 @@ export interface OminityFormField {
   isInline: boolean;
   css: FieldCss;
   validation: FieldValidation;
-  options: Array<FieldOption> | Array<string>;
+  options: FieldOptionsValue;
   order: number;
   updatedAt: string;
   createdAt: string;

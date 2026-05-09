@@ -117,7 +117,15 @@ export interface CmsChannelCountry {
   readonly code: string;
   readonly name: string;
   readonly language?: string;
+  readonly currency?: string;
   readonly enabled?: boolean;
+  readonly default?: boolean;
+}
+
+export interface CmsChannelCurrency {
+  readonly code: string;
+  readonly name?: string;
+  readonly symbol?: string;
   readonly default?: boolean;
 }
 
@@ -127,8 +135,10 @@ export interface CmsChannel {
   readonly name: string;
   readonly defaultLanguageCode?: string;
   readonly defaultCountryCode?: string;
+  readonly defaultCurrencyCode?: string;
   readonly languages: ReadonlyArray<CmsChannelLanguage>;
   readonly countries: ReadonlyArray<CmsChannelCountry>;
+  readonly currencies: ReadonlyArray<CmsChannelCurrency>;
 }
 
 export interface CmsRenderContext {

@@ -5,5 +5,6 @@ export * from "./pages/index.js";
 export * from "./menus/index.js";
 export * from "./routing/index.js";
 export * from "./locales/index.js";
+export * from "./market.js";
 export * from "./seo/index.js";
 export * from "./rendering/index.js";

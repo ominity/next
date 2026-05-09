@@ -3,6 +3,7 @@ import { normalizeLocaleCode, parseLocaleCode } from "./locales/index.js";
 import type {
   CmsChannel,
   CmsChannelCountry,
+  CmsChannelCurrency,
   CmsChannelLanguage,
   CmsFieldValue,
   CmsLocale,
@@ -589,13 +590,35 @@ function normalizeChannelCountry(input: unknown): CmsChannelCountry | null {
     return null;
   }
   const language = asString(input.language);
+  const currency = asString(input.currency);
   const isEnabled = asBoolean(input.isEnabled);
 
   return {
     code: code.toUpperCase(),
     name,
     ...(typeof language === "string" ? { language } : {}),
+    ...(typeof currency === "string" ? { currency: currency.toUpperCase() } : {}),
     ...(typeof isEnabled === "boolean" ? { enabled: isEnabled } : {}),
+  };
+}
+
+function normalizeChannelCurrency(input: unknown): CmsChannelCurrency | null {
+  if (!isRecord(input)) {
+    return null;
+  }
+
+  const code = asString(input.code);
+  if (!code) {
+    return null;
+  }
+
+  const name = asString(input.name);
+  const symbol = asString(input.symbol);
+
+  return {
+    code: code.toUpperCase(),
+    ...(typeof name === "string" ? { name } : {}),
+    ...(typeof symbol === "string" ? { symbol } : {}),
   };
 }
 
@@ -629,6 +652,9 @@ export function normalizeChannel(input: unknown): CmsChannel {
   const countries = asArray(value.countries ?? (isRecord(value._embedded) ? value._embedded.countries : undefined))
     .map((entry) => normalizeChannelCountry(entry))
     .filter((entry): entry is CmsChannelCountry => entry !== null);
+  const currencies = asArray(value.currencies ?? (isRecord(value._embedded) ? value._embedded.currencies : undefined))
+    .map((entry) => normalizeChannelCurrency(entry))
+    .filter((entry): entry is CmsChannelCurrency => entry !== null);
 
   const defaultLanguage = isRecord(value.defaultLanguage)
     ? value.defaultLanguage
@@ -644,11 +670,20 @@ export function normalizeChannel(input: unknown): CmsChannel {
       : isRecord(value._embedded) && isRecord(value._embedded.default_country)
         ? value._embedded.default_country
       : undefined;
+  const defaultCurrency = isRecord(value.defaultCurrency)
+    ? value.defaultCurrency
+    : isRecord(value._embedded) && isRecord(value._embedded.defaultCurrency)
+      ? value._embedded.defaultCurrency
+      : isRecord(value._embedded) && isRecord(value._embedded.default_currency)
+        ? value._embedded.default_currency
+      : undefined;
 
   const defaultLanguageCode = defaultLanguage ? asString(defaultLanguage.code) : undefined;
   const defaultCountryCode = defaultCountry ? asString(defaultCountry.code) : undefined;
+  const defaultCurrencyCode = defaultCurrency ? asString(defaultCurrency.code) : undefined;
   const normalizedDefaultLanguageCode = defaultLanguageCode ? normalizeLocaleCode(defaultLanguageCode) : undefined;
   const normalizedDefaultCountryCode = defaultCountryCode ? defaultCountryCode.toUpperCase() : undefined;
+  const normalizedDefaultCurrencyCode = defaultCurrencyCode ? defaultCurrencyCode.toUpperCase() : undefined;
 
   const normalizedLanguages = languages.map((language) => ({
     ...language,
@@ -662,6 +697,12 @@ export function normalizeChannel(input: unknown): CmsChannel {
       ? { default: true }
       : {}),
   }));
+  const normalizedCurrencies = currencies.map((currency) => ({
+    ...currency,
+    ...(normalizedDefaultCurrencyCode && currency.code === normalizedDefaultCurrencyCode
+      ? { default: true }
+      : {}),
+  }));
 
   return {
     id: idRaw,
@@ -669,8 +710,10 @@ export function normalizeChannel(input: unknown): CmsChannel {
     name,
     ...(normalizedDefaultLanguageCode ? { defaultLanguageCode: normalizedDefaultLanguageCode } : {}),
     ...(normalizedDefaultCountryCode ? { defaultCountryCode: normalizedDefaultCountryCode } : {}),
+    ...(normalizedDefaultCurrencyCode ? { defaultCurrencyCode: normalizedDefaultCurrencyCode } : {}),
     languages: normalizedLanguages,
     countries: normalizedCountries,
+    currencies: normalizedCurrencies,
   };
 }
 

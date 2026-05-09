@@ -13,11 +13,18 @@ export {
 export { createFormsDebugLogger } from "./debug.js";
 export { createShadcnFormComponents } from "./shadcn.js";
 export { default as PhoneInput } from "./phone/PhoneInput.js";
+export {
+  deriveFormRecaptchaConfig,
+  resolveFormRecaptchaConfig,
+} from "./recaptcha/config.js";
 export type {
   FormRendererProps,
   FormTheme,
   PassthroughClasses,
   RecaptchaConfig,
+  OminityForm,
+  OminityFormField,
+  FieldOptionsValue,
   PhoneFieldValue,
   PhoneCountry,
   MetadataValue,

@@ -2,6 +2,7 @@ import { Ominity } from "@ominity/api-typescript";
 
 import { createCmsDebugLogger } from "./debug.js";
 import { CmsClientError } from "./errors.js";
+import { resolveApiLanguage } from "./market.js";
 import { normalizeLocaleCode, parseLocaleCode, toLocaleCode } from "./locales/index.js";
 import { defaultCmsNormalizers } from "./normalize.js";
 import type {
@@ -118,8 +119,9 @@ function buildHeaders(input: {
 }): Headers {
   const headers = new Headers();
 
-  if (input.locale) {
-    headers.set("Accept-Language", input.locale);
+  const language = resolveApiLanguage(input.locale);
+  if (language) {
+    headers.set("Accept-Language", language);
   }
 
   if (input.channelId) {

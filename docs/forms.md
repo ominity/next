@@ -7,7 +7,7 @@ It gives you:
 - a production-ready client form renderer
 - a server-side submission handler for App Router route handlers
 - typed normalization for form payloads
-- optional adapter-based integration for `@ominity/api-typescript-module-forms`
+- optional adapter-based integration for `@ominity/api-module-forms`
 - theme and component override APIs (including shadcn-friendly mapping)
 
 ## What to import
@@ -48,6 +48,8 @@ export function ContactFormClient({ form }: { form: any }) {
 
 This keeps your page/server route SSG/ISR/SSR compatible while isolating form interactivity to a client boundary.
 
+When your form payload includes a `recaptcha` field with options, `FormRenderer` can auto-configure the client-side reCAPTCHA integration from that field (`siteKey`, `version`, `expectedAction`).
+
 ## Server submit route
 
 ```ts
@@ -56,7 +58,6 @@ import { createOminityFormSubmitHandler } from "@ominity/next/forms";
 const submitHandler = createOminityFormSubmitHandler({
   ominityApiKey: process.env.OMINITY_API_KEY ?? "",
   ominityBaseUrl: process.env.OMINITY_API_URL,
-  recaptchaSecret: process.env.OMINITY_FORMS_RECAPTCHA_SECRET,
 });
 
 export const POST = (request: Request) => submitHandler(request);
@@ -65,14 +66,14 @@ export const POST = (request: Request) => submitHandler(request);
 What this handler does:
 
 - validates request shape
-- verifies reCAPTCHA (when configured)
+- optionally verifies reCAPTCHA (only when `recaptchaSecret` is configured in the route handler)
 - strips honeypot fields
 - enriches metadata (`ip_address`, `user_agent`, `referrer`, locale)
 - forwards normalized submissions to Ominity Forms API
 
 ## Optional SDK-module adapter strategy
 
-If you use `@ominity/api-typescript-module-forms`, keep this package decoupled by injecting adapters.
+If you use `@ominity/api-module-forms`, keep this package decoupled by injecting adapters.
 
 ### Read operations
 
@@ -142,4 +143,3 @@ Built-in theme exports:
 - `loungeDepotFormTheme` (migration helper)
 
 Use `themeOverride` + `pt` for project-specific styling.
-

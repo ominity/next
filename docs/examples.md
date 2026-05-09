@@ -134,7 +134,6 @@ import { createOminityFormSubmitHandler } from "@ominity/next/forms";
 const handler = createOminityFormSubmitHandler({
   ominityApiKey: process.env.OMINITY_API_KEY ?? "",
   ominityBaseUrl: process.env.OMINITY_API_URL,
-  recaptchaSecret: process.env.OMINITY_FORMS_RECAPTCHA_SECRET,
 });
 
 export const POST = (request: Request) => handler(request);

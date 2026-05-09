@@ -2,6 +2,7 @@ import { FormsNormalizationError } from "./errors.js";
 import type {
   FieldCss,
   FieldOption,
+  FieldOptionsValue,
   FieldValidation,
   FormFieldType,
   OminityForm,
@@ -19,6 +20,7 @@ const FORM_FIELD_TYPES: ReadonlySet<FormFieldType> = new Set([
   "hidden",
   "metadata",
   "honeypot",
+  "recaptcha",
   "button",
 ]);
 
@@ -180,19 +182,27 @@ function normalizeFieldOption(input: unknown): FieldOption | null {
   };
 }
 
-function normalizeFieldOptions(input: unknown): Array<FieldOption> | Array<string> {
+function normalizeFieldOptions(input: unknown): FieldOptionsValue {
   const options = asArray(input);
-  if (options.length === 0) {
-    return [];
+  if (options.length > 0 || Array.isArray(input)) {
+    if (options.length === 0) {
+      return [];
+    }
+
+    if (options.every((entry) => typeof entry === "string")) {
+      return options as Array<string>;
+    }
+
+    return options
+      .map((entry) => normalizeFieldOption(entry))
+      .filter((entry): entry is FieldOption => entry !== null);
   }
 
-  if (options.every((entry) => typeof entry === "string")) {
-    return options as Array<string>;
+  if (isRecord(input)) {
+    return { ...input };
   }
 
-  return options
-    .map((entry) => normalizeFieldOption(entry))
-    .filter((entry): entry is FieldOption => entry !== null);
+  return [];
 }
 
 function normalizeFieldType(input: unknown): FormFieldType {
@@ -292,4 +302,3 @@ export const defaultFormsNormalizers = {
   form: normalizeOminityForm,
   forms: normalizeOminityForms,
 } as const;
-
