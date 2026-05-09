@@ -35,7 +35,7 @@ export const linkResolver = createCmsLinkResolver({
 ### `lib/cms-registry.ts`
 
 ```ts
-import { createCmsRegistry, defineCmsComponent } from "@ominity/next/rendering";
+import { createCmsRegistry, defineCmsComponent } from "@ominity/next/cms/rendering";
 
 import { HeroBlock } from "@/components/cms/hero-block";
 import { RichTextBlock } from "@/components/cms/rich-text-block";
@@ -54,7 +54,7 @@ export const cmsRegistry = createCmsRegistry([
 import { notFound, redirect } from "next/navigation";
 
 import { fetchCmsPageForParams, resolveDraftMode } from "@ominity/next/next";
-import { renderCmsPage } from "@ominity/next/rendering";
+import { renderCmsPage } from "@ominity/next/cms/rendering";
 
 import { cmsClient, routing } from "@/lib/cms";
 import { cmsRegistry } from "@/lib/cms-registry";

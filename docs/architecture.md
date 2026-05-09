@@ -12,7 +12,7 @@
    - provides routing and locale utilities
    - provides CMS-focused metadata helpers
 
-2. **Rendering layer (`src/rendering`)**
+2. **Rendering layer (`src/cms/rendering`)**
    - accepts project component registry
    - centralizes recursive render logic
    - handles nested component values in fields and child trees

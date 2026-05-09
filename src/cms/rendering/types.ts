@@ -1,4 +1,4 @@
-import type { CmsPageComponent, CmsRenderContext } from "../cms/types.js";
+import type { CmsPageComponent, CmsRenderContext } from "../types.js";
 
 export type CmsRenderable = unknown;
 
@@ -50,4 +50,3 @@ export interface CreateCmsRendererInput<TContext = CmsRenderContext> {
   readonly context: TContext;
   readonly options?: CmsRendererOptions<TContext>;
 }
-

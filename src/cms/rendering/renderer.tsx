@@ -1,7 +1,7 @@
 import { createElement } from "react";
 
-import { CmsRenderError } from "../cms/errors.js";
-import type { CmsPageComponent } from "../cms/types.js";
+import { CmsRenderError } from "../errors.js";
+import type { CmsPageComponent } from "../types.js";
 import type {
   CmsRenderable,
   CmsRenderer,
@@ -147,4 +147,3 @@ export function createCmsRenderer<TContext>(input: CreateCmsRendererInput<TConte
 
   return renderer;
 }
-

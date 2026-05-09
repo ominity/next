@@ -1,4 +1,4 @@
-import type { CmsPageComponent } from "../cms/types.js";
+import type { CmsPageComponent } from "../types.js";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -66,4 +66,3 @@ export function collectNestedComponents(value: unknown): ReadonlyArray<CmsPageCo
   visit(value);
   return collected;
 }
-

@@ -1,6 +1,6 @@
 import { Fragment, createElement } from "react";
 
-import type { CmsPage } from "../cms/types.js";
+import type { CmsPage } from "../types.js";
 import { createCmsRenderer } from "./renderer.js";
 import type { CmsRegistry, CmsRenderable, CmsRendererOptions } from "./types.js";
 import { flattenRenderResult } from "./utils.js";

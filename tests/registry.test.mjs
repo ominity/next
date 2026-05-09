@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { createCmsRegistry, defineCmsComponent } from "../dist/rendering/index.js";
+import { createCmsRegistry, defineCmsComponent } from "../dist/cms/rendering/index.js";
 
 test("createCmsRegistry registers components", () => {
   const Hero = () => null;
@@ -27,4 +27,3 @@ test("createCmsRegistry throws for duplicate keys", () => {
     },
   );
 });
-

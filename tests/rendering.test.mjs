@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 
-import { createCmsRegistry, createCmsRenderer, defineCmsComponent } from "../dist/rendering/index.js";
+import { createCmsRegistry, createCmsRenderer, defineCmsComponent } from "../dist/cms/rendering/index.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -109,4 +109,3 @@ test("renderer resolves direct children", async () => {
     content: "Nested child content",
   });
 });
-

@@ -1,4 +1,4 @@
-import type { CmsPageComponent } from "../cms/types.js";
+import type { CmsPageComponent } from "../types.js";
 import type { CmsRenderable, CmsRenderer } from "./types.js";
 
 export function renderCmsComponent<TContext>(
@@ -7,4 +7,3 @@ export function renderCmsComponent<TContext>(
 ): CmsRenderable {
   return renderer.renderComponent(component);
 }
-

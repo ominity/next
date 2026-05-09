@@ -1,6 +1,6 @@
 {
   "name": "@ominity/next",
-  "version": "1.1.3",
+  "version": "1.1.4",
   "description": "Next.js App Router integration layer for Ominity CMS.",
   "homepage": "https://github.com/ominity/next#readme",
   "bugs": {
@@ -22,9 +22,9 @@
       "types": "./dist/cms/index.d.ts",
       "default": "./dist/cms/index.js"
     },
-    "./rendering": {
-      "types": "./dist/rendering/index.d.ts",
-      "default": "./dist/rendering/index.js"
+    "./cms/rendering": {
+      "types": "./dist/cms/rendering/index.d.ts",
+      "default": "./dist/cms/rendering/index.js"
     },
     "./next": {
       "types": "./dist/next/index.d.ts",

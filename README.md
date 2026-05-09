@@ -68,7 +68,7 @@ export const cmsClient = createCmsClient({
 ### 2) Define your project registry
 
 ```ts
-import { createCmsRegistry, defineCmsComponent } from "@ominity/next/rendering";
+import { createCmsRegistry, defineCmsComponent } from "@ominity/next/cms/rendering";
 
 import { HeroBlock } from "@/components/cms/hero-block";
 import { CarouselBlock } from "@/components/cms/carousel-block"; // can be a Client Component
@@ -84,7 +84,7 @@ export const cmsRegistry = createCmsRegistry([
 ```tsx
 import { createRoutingConfig } from "@ominity/next/cms";
 import { fetchCmsPageForParams } from "@ominity/next/next";
-import { renderCmsPage } from "@ominity/next/rendering";
+import { renderCmsPage } from "@ominity/next/cms/rendering";
 
 import { cmsClient } from "@/lib/cms-client";
 import { cmsRegistry } from "@/lib/cms-registry";
@@ -244,7 +244,7 @@ export const POST = (request: Request) => handler(request);
 
 - `@ominity/next` – full surface
 - `@ominity/next/cms` – client, stable CMS types, routing, locales, metadata helpers
-- `@ominity/next/rendering` – registry + recursive renderer
+- `@ominity/next/cms/rendering` – registry + recursive renderer
 - `@ominity/next/next` – App Router integration helpers
 - `@ominity/next/forms` – Ominity forms renderer + submit helpers
 - `@ominity/next/commerce` – SDK-backed commerce client + normalized cart/order/payment models

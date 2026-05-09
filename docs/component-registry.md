@@ -5,7 +5,7 @@ The registry is where each website maps CMS component keys to real React compone
 ## Define components
 
 ```ts
-import { createCmsRegistry, defineCmsComponent } from "@ominity/next/rendering";
+import { createCmsRegistry, defineCmsComponent } from "@ominity/next/cms/rendering";
 
 import { Hero } from "@/components/cms/hero";
 import { Carousel } from "@/components/cms/carousel";
@@ -37,4 +37,3 @@ Configure renderer fallback behavior per page render:
 - ignore unknown blocks
 - throw to catch content-model drift early
 - custom fallback for editor-friendly placeholders
-

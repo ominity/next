@@ -1,4 +1,4 @@
-import { CmsRegistryError } from "../cms/errors.js";
+import { CmsRegistryError } from "../errors.js";
 import type {
   CmsComponentDefinition,
   CmsComponentImplementation,
@@ -68,4 +68,3 @@ export function createCmsRegistry<TContext>(
     },
   };
 }
-
