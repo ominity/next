@@ -1,4 +1,5 @@
 import type { OminityOptions } from "@ominity/api-typescript";
+import type { CmsRoutingConfig } from "./routing/config.js";
 
 export type CmsPrimitive = string | number | boolean | null;
 
@@ -158,6 +159,9 @@ export interface CmsMetadataInput {
   readonly includeCanonical?: boolean;
   readonly fallbackRobots?: CmsSeoRobots;
   readonly localeToHrefLang?: (locale: string) => string;
+  readonly routing?: CmsRoutingConfig;
+  readonly alternateLanguages?: ReadonlyArray<string>;
+  readonly alternateCountries?: ReadonlyArray<string>;
 }
 
 export interface CmsClientRequestContext {

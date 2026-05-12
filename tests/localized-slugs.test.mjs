@@ -110,4 +110,30 @@ test("buildLocalizedSlugAlternates returns canonical and language alternates", (
   assert.equal(result.alternates.canonical, "https://www.example.com/nl/contacteer-ons");
   assert.equal(result.alternates.languages?.en, "https://www.example.com/en/contact");
   assert.equal(result.alternates.languages?.nl, "https://www.example.com/nl/contacteer-ons");
+  assert.equal(result.alternates.languages?.["en-BE"], undefined);
+});
+
+test("buildLocalizedSlugAlternates expands country-language alternates to all language-country combinations", () => {
+  const routing = createRoutingConfig({
+    defaultLocale: "en",
+    locales: baseLocales,
+    localeSegmentStrategy: "country-language",
+  });
+
+  const result = buildLocalizedSlugAlternates({
+    routing,
+    locale: "nl-BE",
+    slugByLocale: {
+      en: "contact",
+      nl: "contacteer-ons",
+    },
+    countries: ["BE", "NL"],
+    languages: ["en", "nl"],
+    baseUrl: "https://www.example.com",
+  });
+
+  assert.equal(result.alternates.languages?.["en-BE"], "https://www.example.com/be/en/contact");
+  assert.equal(result.alternates.languages?.["nl-BE"], "https://www.example.com/be/nl/contacteer-ons");
+  assert.equal(result.alternates.languages?.["en-NL"], "https://www.example.com/nl/en/contact");
+  assert.equal(result.alternates.languages?.["nl-NL"], "https://www.example.com/nl/nl/contacteer-ons");
 });

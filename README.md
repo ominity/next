@@ -234,6 +234,27 @@ const { alternates } = buildLocalizedSlugAlternates({
 
 These helpers use your configured/routing locales as the source of truth and gracefully fall back from locale code (e.g. `nl-BE`) to language code (e.g. `nl`) when needed.
 
+`buildLocalizedSlugAlternates` is strategy-aware:
+
+- `language`: emits language-only `hreflang` keys (`en`, `nl`, ...)
+- `country-language`: emits country-language keys (`en-BE`, `nl-BE`, ...) and can expand all combinations with:
+
+```ts
+const { alternates } = buildLocalizedSlugAlternates({
+  routing,
+  locale: "nl-BE",
+  slugByLocale,
+  countries: ["BE", "NL"],
+  languages: ["en", "nl"],
+});
+```
+
+For CMS pages, `buildNextMetadataFromPage` accepts the same routing-aware inputs via:
+
+- `routing`
+- `alternateLanguages`
+- `alternateCountries`
+
 ## Forms module (new)
 
 `@ominity/next/forms` provides the lounge-depot forms builder capabilities as a reusable package module:

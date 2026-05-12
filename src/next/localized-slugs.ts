@@ -1,6 +1,6 @@
 import type { CmsLocale, CmsRoutingConfig } from "../cms/index.js";
 import { CmsRouteResolutionError } from "../cms/errors.js";
-import { normalizeLocaleCode, parseLocaleCode } from "../cms/locales/index.js";
+import { normalizeLocaleCode, parseLocaleCode, resolveAlternateLocaleTargets } from "../cms/locales/index.js";
 import { createCmsLinkResolver } from "../cms/routing/index.js";
 import type { NextMetadata } from "./types.js";
 
@@ -23,6 +23,8 @@ export interface BuildLocalizedStaticPathInput extends ResolveLocalizedSlugInput
 export interface BuildLocalizedSlugAlternatesInput extends BuildLocalizedStaticPathInput {
   readonly baseUrl?: string | URL;
   readonly localeToHrefLang?: (locale: string) => string;
+  readonly languages?: ReadonlyArray<string>;
+  readonly countries?: ReadonlyArray<string>;
 }
 
 export interface LocalizedSlugAlternatesResult {
@@ -207,19 +209,25 @@ export function buildLocalizedStaticPath(input: BuildLocalizedStaticPathInput): 
 }
 
 export function buildLocalizedSlugAlternates(input: BuildLocalizedSlugAlternatesInput): LocalizedSlugAlternatesResult {
-  const locales = localeCodes(input.locales ?? input.routing.locales);
+  const locales = input.locales ?? input.routing.locales;
   const languages: Record<string, string> = {};
+  const targets = resolveAlternateLocaleTargets({
+    localeSegmentStrategy: input.routing.localeSegmentStrategy,
+    locales,
+    ...(Array.isArray(input.languages) ? { languages: input.languages } : {}),
+    ...(Array.isArray(input.countries) ? { countries: input.countries } : {}),
+  });
 
-  for (const locale of locales) {
+  for (const target of targets) {
     const path = buildLocalizedStaticPath({
       slugByLocale: input.slugByLocale,
-      locale,
+      locale: target.locale,
       routing: input.routing,
-      locales: input.locales ?? input.routing.locales,
+      locales,
       defaultLocale: input.defaultLocale ?? input.routing.defaultLocale,
       ...(typeof input.prefixPath === "string" ? { prefixPath: input.prefixPath } : {}),
     });
-    const hrefLang = input.localeToHrefLang?.(locale) ?? locale;
+    const hrefLang = input.localeToHrefLang?.(target.hrefLang) ?? target.hrefLang;
     languages[hrefLang] = toAbsoluteUrl(input.baseUrl, path);
   }
 
@@ -227,7 +235,7 @@ export function buildLocalizedSlugAlternates(input: BuildLocalizedSlugAlternates
     slugByLocale: input.slugByLocale,
     locale: input.locale,
     routing: input.routing,
-    locales: input.locales ?? input.routing.locales,
+    locales,
     defaultLocale: input.defaultLocale ?? input.routing.defaultLocale,
     ...(typeof input.prefixPath === "string" ? { prefixPath: input.prefixPath } : {}),
   });

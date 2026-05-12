@@ -51,6 +51,8 @@ Fix:
 
 - ensure `CmsPage.translations` is filled by your CMS endpoint/normalizer
 - set `includeAlternates: true`
+- pass `routing` into `buildNextMetadataFromPage` so alternates follow `OMINITY_LOCALE_SEGMENT_STRATEGY`
+- for `country-language` cartesian alternates, also pass `alternateLanguages` and `alternateCountries`
 
 ### Forms do not submit
 
