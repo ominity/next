@@ -60,6 +60,47 @@ function asPositiveQuantity(quantity: number): number {
   return normalized > 0 ? normalized : 1;
 }
 
+function normalizeProductIdValue(productId: string): string | number {
+  const trimmed = productId.trim();
+  const numericId = Number.parseInt(trimmed, 10);
+  if (Number.isFinite(numericId) && `${numericId}` === trimmed) {
+    return numericId;
+  }
+
+  return trimmed;
+}
+
+function normalizeCreateCartItemPayload(
+  productId: string,
+  quantity: number,
+  data: unknown,
+): Record<string, unknown> {
+  const payload: Record<string, unknown> = {
+    ...asRecord(data),
+  };
+  payload.productId = normalizeProductIdValue(productId);
+  payload.quantity = quantity;
+
+  delete payload.product_id;
+  delete payload.cartId;
+  delete payload.data;
+
+  return payload;
+}
+
+async function parseResponseBody(response: Response): Promise<unknown> {
+  if (response.status === 204) {
+    return true;
+  }
+
+  const contentType = response.headers.get("content-type") ?? "";
+  if (contentType.toLowerCase().includes("json")) {
+    return response.json();
+  }
+
+  return response.text();
+}
+
 export function createCommerceClient(options: CommerceClientOptions): CommerceClient {
   const sdk = new Ominity(options.sdk);
   const debug = createCommerceDebugLogger(options.debug, "commerce-client");
@@ -191,7 +232,15 @@ export function createCommerceClient(options: CommerceClientOptions): CommerceCl
             quantity,
             ...(typeof input.data === "object" && input.data !== null ? input.data : {}),
           })
-          : await sdk.commerce.cartItems.create(input.cartId, input.productId, quantity);
+          : await (async () => {
+            const response = await sdk.http.post(
+              `/commerce/carts/${encodeURIComponent(input.cartId)}/items`,
+              {
+                json: normalizeCreateCartItemPayload(input.productId, quantity, input.data),
+              },
+            );
+            return parseResponseBody(response);
+          })();
 
         return normalizeCommerceCartItem(payload);
       } catch (error) {
@@ -212,11 +261,15 @@ export function createCommerceClient(options: CommerceClientOptions): CommerceCl
       try {
         const payload = options.adapter?.updateCartItem
           ? await options.adapter.updateCartItem(input.cartId, input.itemId, input.data)
-          : await sdk.commerce.cartItems.update(
-            input.cartId,
-            input.itemId,
-            input.data as Record<string, any>,
-          );
+          : await (async () => {
+            const response = await sdk.http.patch(
+              `/commerce/carts/${encodeURIComponent(input.cartId)}/items/${encodeURIComponent(input.itemId)}`,
+              {
+                json: input.data as Record<string, unknown>,
+              },
+            );
+            return parseResponseBody(response);
+          })();
 
         return normalizeCommerceCartItem(payload);
       } catch (error) {

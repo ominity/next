@@ -254,27 +254,61 @@ function localeFromChannelLanguage(language: CmsChannel["languages"][number]): C
   };
 }
 
-function localeFromChannelCountry(country: CmsChannel["countries"][number]): CmsLocale | null {
-  if (!country.language) {
-    return null;
+function uniqueOrdered(values: ReadonlyArray<string>): ReadonlyArray<string> {
+  const seen = new Set<string>();
+  const result: string[] = [];
+
+  for (const value of values) {
+    if (value.length === 0 || seen.has(value)) {
+      continue;
+    }
+
+    seen.add(value);
+    result.push(value);
   }
 
-  const parsedLanguage = parseLocaleCode(normalizeLocaleCode(country.language));
-  if (parsedLanguage.language.length === 0) {
-    return null;
-  }
+  return result;
+}
 
-  const code = toLocaleCode({
-    language: parsedLanguage.language,
-    country: country.code.toUpperCase(),
-  });
+function channelLanguageCodes(channel: CmsChannel): ReadonlyArray<string> {
+  const fromChannelLanguages = channel.languages
+    .map((language) => parseLocaleCode(normalizeLocaleCode(language.code)).language)
+    .filter((entry) => entry.length > 0);
+  const fromCountries = channel.countries
+    .map((country) => country.language)
+    .filter((entry): entry is string => typeof entry === "string")
+    .map((entry) => parseLocaleCode(normalizeLocaleCode(entry)).language)
+    .filter((entry) => entry.length > 0);
+  const fromDefault = channel.defaultLanguageCode
+    ? [parseLocaleCode(normalizeLocaleCode(channel.defaultLanguageCode)).language].filter((entry) => entry.length > 0)
+    : [];
 
-  return {
-    code,
-    language: parsedLanguage.language,
-    country: country.code.toUpperCase(),
-    ...(country.default === true ? { default: true } : {}),
-  };
+  return uniqueOrdered([
+    ...fromChannelLanguages,
+    ...fromCountries,
+    ...fromDefault,
+  ]);
+}
+
+function localesFromChannelCountry(
+  country: CmsChannel["countries"][number],
+  languages: ReadonlyArray<string>,
+): ReadonlyArray<CmsLocale> {
+  const normalizedCountryCode = country.code.toUpperCase();
+  const languageList = languages.length > 0
+    ? languages
+    : country.language
+      ? [parseLocaleCode(normalizeLocaleCode(country.language)).language].filter((entry) => entry.length > 0)
+      : [];
+
+  return languageList.map((language) => ({
+    code: toLocaleCode({
+      language,
+      country: normalizedCountryCode,
+    }),
+    language,
+    country: normalizedCountryCode,
+  }));
 }
 
 function defaultLocaleCandidatesFromChannel(channel: CmsChannel): ReadonlyArray<string> {
@@ -355,6 +389,7 @@ function mergeLocalesWithChannel(
   channel: CmsChannel,
 ): ReadonlyArray<CmsLocale> {
   const merged = new Map<string, CmsLocale>();
+  const combinedChannelLanguages = channelLanguageCodes(channel);
 
   const channelLanguages = channel.languages.map((language) => parseLocaleCode(normalizeLocaleCode(language.code)).language);
   const hasChannelLanguageFilter = channelLanguages.length > 0;
@@ -377,12 +412,10 @@ function mergeLocalesWithChannel(
   }
 
   for (const country of channel.countries) {
-    const locale = localeFromChannelCountry(country);
-    if (!locale) {
-      continue;
+    const countryLocales = localesFromChannelCountry(country, combinedChannelLanguages);
+    for (const locale of countryLocales) {
+      merged.set(locale.code, mergeLocaleEntry(merged.get(locale.code), locale));
     }
-
-    merged.set(locale.code, mergeLocaleEntry(merged.get(locale.code), locale));
   }
 
   const withDefaults = applyDefaultLocale(
