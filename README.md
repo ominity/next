@@ -200,6 +200,40 @@ Example route object:
 
 You can override link generation per route type with custom resolvers.
 
+## Localized slugs for hard-coded pages
+
+For non-CMS routes (for example `/auth/login`), you can keep slug translations in JSON-style maps and let `@ominity/next` resolve canonical locale paths and alternates:
+
+```ts
+import {
+  buildLocalizedSlugAlternates,
+  buildLocalizedStaticPath,
+} from "@ominity/next/next";
+
+const slugByLocale = {
+  en: "login",
+  nl: "inloggen",
+};
+
+const canonicalPath = buildLocalizedStaticPath({
+  routing,
+  locale: "nl",
+  prefixPath: "/auth",
+  slugByLocale,
+});
+// -> /nl/auth/inloggen (depends on locale strategy)
+
+const { alternates } = buildLocalizedSlugAlternates({
+  routing,
+  locale: "nl",
+  prefixPath: "/auth",
+  slugByLocale,
+  baseUrl: "https://www.example.com",
+});
+```
+
+These helpers use your configured/routing locales as the source of truth and gracefully fall back from locale code (e.g. `nl-BE`) to language code (e.g. `nl`) when needed.
+
 ## Forms module (new)
 
 `@ominity/next/forms` provides the lounge-depot forms builder capabilities as a reusable package module:
