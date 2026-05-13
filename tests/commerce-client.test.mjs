@@ -3,7 +3,7 @@ import { test } from "node:test";
 
 import { createCommerceClient } from "../dist/commerce/index.js";
 
-test("createCommerceClient normalizes cart and cart items via adapter", async () => {
+test("createCommerceClient returns SDK-shaped cart and cart item payloads via adapter", async () => {
   const client = createCommerceClient({
     sdk: {
       serverURL: "https://example.ominity.test/api",
@@ -64,18 +64,18 @@ test("createCommerceClient normalizes cart and cart items via adapter", async ()
   const cart = await client.getCart({ cartId: "cart_1" });
   assert.ok(cart);
   assert.equal(cart.id, "cart_1");
-  assert.equal(cart.currency, "EUR");
-  assert.equal(cart.totalAmount.value, 12.1);
+  assert.equal(cart.currency, "eur");
+  assert.equal(cart.totalAmount.amount, "12.10");
 
   const items = await client.listCartItems({ cartId: "cart_1" });
   assert.equal(items.length, 1);
   assert.equal(items[0].id, "item_1");
   assert.equal(items[0].title, "Desk Lamp");
-  assert.equal(items[0].unitPrice?.value, 5);
-  assert.equal(items[0].totalPrice?.value, 10);
+  assert.equal(items[0].price.amount, "5.00");
+  assert.equal(items[0].totalPrice.amount, "10.00");
 });
 
-test("createCommerceClient normalizes shipping and payment methods", async () => {
+test("createCommerceClient returns SDK-shaped shipping and payment methods", async () => {
   const client = createCommerceClient({
     sdk: {
       serverURL: "https://example.ominity.test/api",

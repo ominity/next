@@ -1,20 +1,11 @@
 import { Ominity } from "@ominity/api-typescript";
+import type { Paginated } from "@ominity/api-typescript/models";
 
 import { CommerceClientError } from "../cms/errors.js";
 import { createCommerceDebugLogger } from "./debug.js";
-import {
-  normalizeCommerceCart,
-  normalizeCommerceCartItem,
-  normalizeCommerceCartItemList,
-  normalizeCommerceCartList,
-  normalizeCommerceOrder,
-  normalizeCommercePayment,
-  normalizeCommercePaymentList,
-  normalizeCommercePaymentMethodList,
-  normalizeCommerceProduct,
-  normalizeCommerceShippingMethodList,
-} from "./normalize.js";
 import type {
+  CommerceCart,
+  CommerceCartItem,
   CommerceClient,
   CommerceClientOptions,
   CommerceCreateCartInput,
@@ -30,15 +21,88 @@ import type {
   CommerceListCartsInput,
   CommerceListOrderPaymentsInput,
   CommerceListPaymentMethodsInput,
+  CommercePayment,
+  CommercePaymentMethod,
+  CommerceProduct,
+  CommerceShippingMethod,
   CommerceListShippingMethodsInput,
   CommerceUpdateCartInput,
   CommerceUpdateCartItemInput,
 } from "./types.js";
 
 type UnknownRecord = Record<string, unknown>;
+type HookContextLike = {
+  options?: Record<string, unknown>;
+};
+type BeforeCreateRequestLike = (
+  context: HookContextLike,
+  input: unknown,
+) => unknown;
+type HooksLike = {
+  beforeCreateRequest?: BeforeCreateRequestLike;
+  __ominityContextOptionsPatched?: boolean;
+};
+type OminityWithInternals = Ominity & {
+  _options?: Record<string, unknown> & {
+    hooks?: HooksLike;
+  };
+};
 
 function asRecord(value: unknown): UnknownRecord {
   return typeof value === "object" && value !== null ? value as UnknownRecord : {};
+}
+
+function patchHookContextOptions(sdk: Ominity): Ominity {
+  const sdkWithInternals = sdk as OminityWithInternals;
+  const hooks = sdkWithInternals._options?.hooks;
+  if (!hooks || typeof hooks.beforeCreateRequest !== "function") {
+    return sdk;
+  }
+
+  if (hooks.__ominityContextOptionsPatched === true) {
+    return sdk;
+  }
+
+  const original = hooks.beforeCreateRequest.bind(hooks) as (
+    context: HookContextLike,
+    input: unknown,
+  ) => unknown;
+  (hooks as unknown as { beforeCreateRequest: BeforeCreateRequestLike }).beforeCreateRequest = ((
+    context: HookContextLike,
+    input: unknown,
+  ) => {
+    const contextOptions = typeof context?.options === "object" && context.options !== null
+      ? context.options
+      : {};
+
+    const mergedContext: HookContextLike = {
+      ...(context ?? {}),
+      options: {
+        ...(sdkWithInternals._options ?? {}),
+        ...contextOptions,
+      },
+    };
+
+    return original(mergedContext, input);
+  }) as BeforeCreateRequestLike;
+
+  hooks.__ominityContextOptionsPatched = true;
+  return sdk;
+}
+
+function asListFromPayload<T>(
+  payload: Paginated<T> | ReadonlyArray<T>,
+): ReadonlyArray<T> {
+  if (Array.isArray(payload)) {
+    return payload;
+  }
+
+  const paginated = payload as Paginated<T>;
+  if (Array.isArray(paginated.items)) {
+    return paginated.items;
+  }
+
+  return [];
 }
 
 function isNotFoundError(error: unknown): boolean {
@@ -101,8 +165,12 @@ async function parseResponseBody(response: Response): Promise<unknown> {
   return response.text();
 }
 
+function asTypedRecord<T>(value: unknown): T {
+  return value as T;
+}
+
 export function createCommerceClient(options: CommerceClientOptions): CommerceClient {
-  const sdk = new Ominity(options.sdk);
+  const sdk = patchHookContextOptions(new Ominity(options.sdk));
   const debug = createCommerceDebugLogger(options.debug, "commerce-client");
 
   return {
@@ -119,7 +187,7 @@ export function createCommerceClient(options: CommerceClientOptions): CommerceCl
           ...(typeof input.filter === "object" && input.filter !== null ? { filter: input.filter } : {}),
         });
 
-      return normalizeCommerceCartList(payload);
+      return asListFromPayload(payload);
     },
 
     async createCart(input: CommerceCreateCartInput = {}) {
@@ -129,7 +197,7 @@ export function createCommerceClient(options: CommerceClientOptions): CommerceCl
         ? await options.adapter.createCart(input.data ?? {})
         : await sdk.commerce.carts.create(input.data ?? {});
 
-      return normalizeCommerceCart(payload);
+      return payload;
     },
 
     async getCart(input: CommerceGetCartInput) {
@@ -144,7 +212,7 @@ export function createCommerceClient(options: CommerceClientOptions): CommerceCl
             ...(typeof input.include === "string" ? { include: input.include } : {}),
           });
 
-        return normalizeCommerceCart(payload);
+        return payload;
       } catch (error) {
         if (isNotFoundError(error)) {
           return null;
@@ -167,7 +235,7 @@ export function createCommerceClient(options: CommerceClientOptions): CommerceCl
           ? await options.adapter.updateCart(input.cartId, input.data)
           : await sdk.commerce.carts.update(input.cartId, input.data as Record<string, any>);
 
-        return normalizeCommerceCart(payload);
+        return payload;
       } catch (error) {
         throw new CommerceClientError("Failed to update cart.", {
           cause: error,
@@ -210,7 +278,7 @@ export function createCommerceClient(options: CommerceClientOptions): CommerceCl
             ...(typeof input.include === "string" ? { include: input.include } : {}),
           });
 
-        return normalizeCommerceCartItemList(payload);
+        return asListFromPayload(payload);
       } catch (error) {
         throw new CommerceClientError("Failed to list cart items.", {
           cause: error,
@@ -242,7 +310,7 @@ export function createCommerceClient(options: CommerceClientOptions): CommerceCl
             return parseResponseBody(response);
           })();
 
-        return normalizeCommerceCartItem(payload);
+        return asTypedRecord<CommerceCartItem>(payload);
       } catch (error) {
         throw new CommerceClientError("Failed to create cart item.", {
           cause: error,
@@ -271,7 +339,7 @@ export function createCommerceClient(options: CommerceClientOptions): CommerceCl
             return parseResponseBody(response);
           })();
 
-        return normalizeCommerceCartItem(payload);
+        return asTypedRecord<CommerceCartItem>(payload);
       } catch (error) {
         throw new CommerceClientError("Failed to update cart item.", {
           cause: error,
@@ -325,7 +393,7 @@ export function createCommerceClient(options: CommerceClientOptions): CommerceCl
             ...(typeof input.include === "string" ? { include: input.include } : {}),
           });
 
-        return normalizeCommerceProduct(payload);
+        return payload;
       } catch (error) {
         if (isNotFoundError(error)) {
           return null;
@@ -352,7 +420,7 @@ export function createCommerceClient(options: CommerceClientOptions): CommerceCl
             ...(typeof input.include === "string" ? { include: input.include } : {}),
           });
 
-        return normalizeCommerceShippingMethodList(payload);
+        return asListFromPayload(payload);
       } catch (error) {
         throw new CommerceClientError("Failed to list shipping methods.", {
           cause: error,
@@ -374,7 +442,7 @@ export function createCommerceClient(options: CommerceClientOptions): CommerceCl
             ...(typeof input.limit === "number" ? { limit: input.limit } : {}),
           });
 
-        return normalizeCommercePaymentMethodList(payload);
+        return asListFromPayload(payload);
       } catch (error) {
         throw new CommerceClientError("Failed to list payment methods.", {
           cause: error,
@@ -390,7 +458,7 @@ export function createCommerceClient(options: CommerceClientOptions): CommerceCl
           ? await options.adapter.createOrder(input.data)
           : await sdk.commerce.orders.create(input.data as Record<string, any>);
 
-        return normalizeCommerceOrder(payload);
+        return payload;
       } catch (error) {
         throw new CommerceClientError("Failed to create order.", {
           cause: error,
@@ -413,7 +481,7 @@ export function createCommerceClient(options: CommerceClientOptions): CommerceCl
             ...(typeof input.include === "string" ? { include: input.include } : {}),
           });
 
-        return normalizeCommerceOrder(payload);
+        return payload;
       } catch (error) {
         if (isNotFoundError(error)) {
           return null;
@@ -436,7 +504,7 @@ export function createCommerceClient(options: CommerceClientOptions): CommerceCl
           ? await options.adapter.listOrderPayments(input.orderId)
           : await sdk.commerce.orders.listPayments(input.orderId);
 
-        return normalizeCommercePaymentList(payload);
+        return asListFromPayload(payload);
       } catch (error) {
         throw new CommerceClientError("Failed to list order payments.", {
           cause: error,
@@ -459,7 +527,7 @@ export function createCommerceClient(options: CommerceClientOptions): CommerceCl
             ...(typeof input.include === "string" ? { include: input.include } : {}),
           });
 
-        return normalizeCommercePayment(payload);
+        return payload;
       } catch (error) {
         if (isNotFoundError(error)) {
           return null;
