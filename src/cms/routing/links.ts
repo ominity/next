@@ -20,6 +20,11 @@ export interface CmsLinkContext {
 
 export type CmsRouteLinkResolver = (context: CmsLinkContext) => string | ReadonlyArray<string>;
 
+export interface CmsDefaultRoutePrefixes {
+  readonly product?: string;
+  readonly category?: string;
+}
+
 export type UnknownRoutePolicy = "throw" | "passthrough";
 
 export type StringLinkStrategy = "passthrough" | "localize-relative";
@@ -27,6 +32,7 @@ export type StringLinkStrategy = "passthrough" | "localize-relative";
 export interface CmsLinkResolverOptions {
   readonly config: CmsRoutingConfig;
   readonly routeResolvers?: Readonly<Record<string, CmsRouteLinkResolver>>;
+  readonly defaultRoutePrefixes?: CmsDefaultRoutePrefixes;
   readonly unknownRoutePolicy?: UnknownRoutePolicy;
   readonly stringLinkStrategy?: StringLinkStrategy;
 }
@@ -81,6 +87,30 @@ function sanitizePathSegment(segment: string): string {
   return encodeURIComponent(segment);
 }
 
+const DEFAULT_PRODUCT_ROUTE_PREFIX = "p";
+const DEFAULT_CATEGORY_ROUTE_PREFIX = "c";
+
+function normalizePrefixSegment(value: string | undefined, fallback: string): string {
+  if (typeof value !== "string") {
+    return fallback;
+  }
+
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return fallback;
+  }
+
+  const normalized = trimmed
+    .replace(/^\/+/, "")
+    .replace(/\/+$/, "");
+
+  if (normalized.length === 0 || normalized.includes("/")) {
+    return fallback;
+  }
+
+  return sanitizePathSegment(normalized);
+}
+
 function normalizeSlugSegments(value: unknown): ReadonlyArray<string> {
   if (Array.isArray(value)) {
     return value
@@ -127,7 +157,7 @@ function applyLocalePrefix(path: string, locale: string, config: CmsRoutingConfi
   return withBasePath;
 }
 
-function productPath(parameters: Readonly<Record<string, unknown>>): string {
+function productPath(parameters: Readonly<Record<string, unknown>>, prefixSegment: string): string {
   const rawSku = parameters.sku;
   const rawSlug = parameters.slug;
 
@@ -156,10 +186,10 @@ function productPath(parameters: Readonly<Record<string, unknown>>): string {
 
   const skuPart = sanitizePathSegment(sku.trim());
   const slugPart = slugSegments.join("-");
-  return `/p/${skuPart}-${slugPart}`;
+  return `/${prefixSegment}/${skuPart}-${slugPart}`;
 }
 
-function categoryPath(parameters: Readonly<Record<string, unknown>>): string {
+function categoryPath(parameters: Readonly<Record<string, unknown>>, prefixSegment: string): string {
   const slugSegments = normalizeSlugSegments(parameters.slug);
   if (slugSegments.length === 0) {
     throw new CmsRouteResolutionError("Category route requires parameters.slug", {
@@ -169,7 +199,7 @@ function categoryPath(parameters: Readonly<Record<string, unknown>>): string {
     });
   }
 
-  return `/c/${slugSegments.join("/")}`;
+  return `/${prefixSegment}/${slugSegments.join("/")}`;
 }
 
 function pagePath(parameters: Readonly<Record<string, unknown>>): string {
@@ -194,19 +224,22 @@ function defaultPageRouteResolver(context: CmsLinkContext): string {
   return pagePath(context.route.parameters);
 }
 
-function defaultProductRouteResolver(context: CmsLinkContext): string {
-  return productPath(context.route.parameters);
+function createDefaultProductRouteResolver(prefixSegment: string): CmsRouteLinkResolver {
+  return (context) => productPath(context.route.parameters, prefixSegment);
 }
 
-function defaultCategoryRouteResolver(context: CmsLinkContext): string {
-  return categoryPath(context.route.parameters);
+function createDefaultCategoryRouteResolver(prefixSegment: string): CmsRouteLinkResolver {
+  return (context) => categoryPath(context.route.parameters, prefixSegment);
 }
 
-export function createDefaultRouteResolvers(): Readonly<Record<string, CmsRouteLinkResolver>> {
+export function createDefaultRouteResolvers(prefixes: CmsDefaultRoutePrefixes = {}): Readonly<Record<string, CmsRouteLinkResolver>> {
+  const productPrefix = normalizePrefixSegment(prefixes.product, DEFAULT_PRODUCT_ROUTE_PREFIX);
+  const categoryPrefix = normalizePrefixSegment(prefixes.category, DEFAULT_CATEGORY_ROUTE_PREFIX);
+
   return {
     page: defaultPageRouteResolver,
-    product: defaultProductRouteResolver,
-    category: defaultCategoryRouteResolver,
+    product: createDefaultProductRouteResolver(productPrefix),
+    category: createDefaultCategoryRouteResolver(categoryPrefix),
   };
 }
 
@@ -237,7 +270,7 @@ function toRoutePath(value: string | ReadonlyArray<string>): string {
 }
 
 export function createCmsLinkResolver(options: CmsLinkResolverOptions): CmsLinkResolver {
-  const defaultResolvers = createDefaultRouteResolvers();
+  const defaultResolvers = createDefaultRouteResolvers(options.defaultRoutePrefixes);
   const routeResolvers = {
     ...defaultResolvers,
     ...options.routeResolvers,

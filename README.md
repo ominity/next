@@ -181,8 +181,8 @@ const token = await auth.issuePasswordToken({
 Built-in route defaults:
 
 - `page` → `/{locale?}/{slug}`
-- `product` → `/{locale?}/p/{sku}-{slug}`
-- `category` → `/{locale?}/c/{slug}` (hierarchical category slugs supported)
+- `product` → `/{locale?}/p/{sku}-{slug}` (prefix configurable)
+- `category` → `/{locale?}/c/{slug}` (hierarchical slugs supported, prefix configurable)
 
 Example route object:
 
@@ -199,6 +199,7 @@ Example route object:
 ```
 
 You can override link generation per route type with custom resolvers.
+You can also override the built-in product/category prefixes with `defaultRoutePrefixes`.
 
 ## Localized slugs for hard-coded pages
 
@@ -254,6 +255,76 @@ For CMS pages, `buildNextMetadataFromPage` accepts the same routing-aware inputs
 - `routing`
 - `alternateLanguages`
 - `alternateCountries`
+
+## Localized route templates
+
+For routes that need nested static paths or placeholders, use localized templates instead of simple slug maps.
+
+Examples:
+
+- `payment`: `"checkout/payment"` or `"something/checkout/payment"`
+- `product`: `"p/{sku}-{slug}"`
+- `category`: `"c/{slug}"`
+
+```ts
+import {
+  buildLocalizedRouteAlternates,
+  buildLocalizedRoutePath,
+} from "@ominity/next/next";
+
+const paymentPath = buildLocalizedRoutePath({
+  routing,
+  locale: "nl",
+  templateByLocale: {
+    en: "checkout/payment",
+    nl: "afrekenen/betalen",
+  },
+});
+// -> /nl/afrekenen/betalen (depends on locale strategy)
+
+const productPath = buildLocalizedRoutePath({
+  routing,
+  locale: "nl",
+  templateByLocale: {
+    en: "p/{sku}-{slug}",
+    nl: "product/{sku}-{slug}",
+  },
+  params: {
+    sku: "ABC-123",
+    slug: "fiets-band",
+  },
+});
+// -> /nl/product/ABC-123-fiets-band
+
+const { alternates } = buildLocalizedRouteAlternates({
+  routing,
+  locale: "nl",
+  templateByLocale: {
+    en: "checkout/payment",
+    nl: "afrekenen/betalen",
+  },
+  baseUrl: "https://www.example.com",
+});
+```
+
+Template notes:
+
+- `{param}` supports strings, numbers, and arrays (arrays expand as hierarchical segments when the segment is exactly `{param}`).
+- Mixed segments like `{sku}-{slug}` require scalar values.
+
+## next-intl bridge
+
+`@ominity/next` now exposes `next-intl` APIs through `@ominity/next/intl`:
+
+```ts
+import {
+  NextIntlClientProvider,
+  defineRouting,
+  useTranslations,
+} from "@ominity/next/intl";
+```
+
+This lets starter projects consume `next-intl` via `@ominity/next` without adding a separate direct dependency first.
 
 ## Forms module (new)
 

@@ -101,10 +101,22 @@ Use `createCmsLinkResolver` to generate localized hrefs from route objects or st
 ### Built-in defaults
 
 - `page`: `/{locale?}/{slug}`
-- `product`: `/{locale?}/p/{sku}-{slug}`
-- `category`: `/{locale?}/c/{slug}` where category slug can be hierarchical (`a/b/c`)
+- `product`: `/{locale?}/p/{sku}-{slug}` (prefix configurable)
+- `category`: `/{locale?}/c/{slug}` where category slug can be hierarchical (`a/b/c`) (prefix configurable)
 
 Both `slug: "a/b/c"` and `slug: ["a", "b", "c"]` are supported for category defaults.
+
+You can override the built-in product/category prefixes globally:
+
+```ts
+const linkResolver = createCmsLinkResolver({
+  config: routing,
+  defaultRoutePrefixes: {
+    product: "product",
+    category: "category",
+  },
+});
+```
 
 ### Override by route type
 
@@ -116,6 +128,44 @@ const linkResolver = createCmsLinkResolver({
   },
 });
 ```
+
+## Localized route templates
+
+For non-CMS routes that need nested paths or dynamic placeholders, use the route template helpers from `@ominity/next/next`:
+
+```ts
+import { buildLocalizedRoutePath } from "@ominity/next/next";
+
+const paymentPath = buildLocalizedRoutePath({
+  routing,
+  locale: "nl",
+  templateByLocale: {
+    en: "checkout/payment",
+    nl: "afrekenen/betalen",
+  },
+});
+// /nl/afrekenen/betalen
+
+const productPath = buildLocalizedRoutePath({
+  routing,
+  locale: "nl",
+  templateByLocale: {
+    en: "p/{sku}-{slug}",
+    nl: "product/{sku}-{slug}",
+  },
+  params: {
+    sku: "ABC-123",
+    slug: "fiets-band",
+  },
+});
+// /nl/product/ABC-123-fiets-band
+```
+
+Template behavior:
+
+- `{param}` supports string/number/array values.
+- Arrays are expanded as hierarchical segments when used as a full segment (`.../{slug}`).
+- Mixed segments (`{sku}-{slug}`) only accept scalar values.
 
 ## Base path and trailing slash
 

@@ -55,6 +55,42 @@ test("default product route object resolver uses /p/{sku}-{slug}", () => {
   assert.equal(result.href, "/nl/p/ABC-123-fiets-band");
 });
 
+test("default product and category route prefixes can be customized", () => {
+  const routing = createRoutingConfig({
+    defaultLocale: "en",
+    locales,
+    localeSegmentStrategy: "language",
+  });
+  const resolver = createCmsLinkResolver({
+    config: routing,
+    defaultRoutePrefixes: {
+      product: "product",
+      category: "category",
+    },
+  });
+
+  const productResult = resolver.resolve({
+    resource: "route",
+    name: "product",
+    locale: "nl",
+    parameters: {
+      sku: "ABC-123",
+      slug: "fiets-band",
+    },
+  });
+  assert.equal(productResult.href, "/nl/product/ABC-123-fiets-band");
+
+  const categoryResult = resolver.resolve({
+    resource: "route",
+    name: "category",
+    locale: "nl",
+    parameters: {
+      slug: "auto/onderdelen/remmen",
+    },
+  });
+  assert.equal(categoryResult.href, "/nl/category/auto/onderdelen/remmen");
+});
+
 test("default category resolver supports hierarchical slug string", () => {
   const routing = createRoutingConfig({
     defaultLocale: "en",
@@ -199,4 +235,3 @@ test("string links can be localized with configuration", () => {
   const result = resolver.resolve("/contact", { locale: "nl" });
   assert.equal(result.href, "/nl/contact");
 });
-

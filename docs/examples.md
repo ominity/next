@@ -29,6 +29,10 @@ export const routing = createRoutingConfig({
 
 export const linkResolver = createCmsLinkResolver({
   config: routing,
+  defaultRoutePrefixes: {
+    product: "p",
+    category: "c",
+  },
 });
 ```
 
@@ -106,6 +110,22 @@ const href = linkResolver.resolve({
   },
 }).href;
 // /nl/p/ABC-123-fiets-band
+```
+
+### Localized template routes
+
+```ts
+import { buildLocalizedRoutePath } from "@ominity/next/next";
+
+const paymentHref = buildLocalizedRoutePath({
+  routing,
+  locale: "nl",
+  templateByLocale: {
+    en: "checkout/payment",
+    nl: "afrekenen/betalen",
+  },
+});
+// /nl/afrekenen/betalen
 ```
 
 ### `app/[[...slug]]/generateStaticParams.ts`
