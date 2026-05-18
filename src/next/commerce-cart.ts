@@ -1,8 +1,12 @@
 import type {
-  CommerceCart,
-  CommerceCartItem,
   CommerceClient,
 } from "../commerce/types.js";
+import type {
+  Cart as CommerceCart,
+} from "@ominity/api-typescript/models/commerce/cart";
+import type {
+  CartItem as CommerceCartItem,
+} from "@ominity/api-typescript/models/commerce/cart-item";
 import {
   readCartIdCookie,
   writeCartIdCookie,
