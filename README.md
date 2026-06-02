@@ -26,7 +26,7 @@ CMS-driven websites often need the same foundation repeatedly:
 ## Install
 
 ```bash
-pnpm add @ominity/next @ominity/api-typescript@^1.1.1
+pnpm add @ominity/next @ominity/api-typescript@^1.1.6
 ```
 
 If you use forms rendering, also install:
@@ -142,7 +142,7 @@ Client Components can be nested inside rendered CMS pages without making the who
 
 ## Auth (server-side)
 
-`@ominity/next/auth` now provides a robust server-first auth layer on top of `@ominity/api-typescript@^1.1.1`:
+`@ominity/next/auth` now provides a robust server-first auth layer on top of `@ominity/api-typescript@^1.1.6`:
 
 - OAuth2 token issuance (`password`, `refresh_token`, and other supported grants)
 - user access token issuance (`users/{id}/token`)
@@ -366,6 +366,84 @@ const handler = createOminityFormSubmitHandler({
 export const POST = (request: Request) => handler(request);
 ```
 
+## Visitor tracking
+
+Use a first-party Next route plus `TrackingProvider` so carts, orders, and browser tracking share one UUID `visitorId`.
+
+Create a same-origin proxy route. A short neutral path such as `/api/omt` is less likely to be filtered than direct third-party analytics requests:
+
+```ts
+import { createOminityTrackingProxyHandler } from "@ominity/next/tracking/proxy";
+
+const handler = createOminityTrackingProxyHandler({
+  ominityApiKey: process.env.OMINITY_API_KEY ?? "",
+  ominityBaseUrl: process.env.OMINITY_API_URL,
+});
+
+export const POST = (request: Request) => handler(request);
+```
+
+Wrap your app with the client provider:
+
+```ts
+import { Ominity } from "@ominity/api-typescript";
+import { createCommerceClient } from "@ominity/next/commerce";
+import { ensureVisitorIdCookie } from "@ominity/next/tracking";
+import { TrackingProvider } from "@ominity/next/tracking/provider";
+
+const visitorId = ensureVisitorIdCookie(cookies());
+
+export function Providers({ children }: { children: React.ReactNode }) {
+  return (
+    <TrackingProvider endpoint="/api/omt">
+      {children}
+    </TrackingProvider>
+  );
+}
+
+const commerce = createCommerceClient({
+  sdk: {
+    serverURL: process.env.OMINITY_API_URL ?? "",
+    security: { apiKey: process.env.OMINITY_API_KEY ?? "" },
+  },
+  visitorIdResolver: () => visitorId,
+});
+
+await commerce.createCart({ data: { currency: "EUR" } }); // visitorId is auto-injected
+
+const sdk = new Ominity({
+  serverURL: process.env.OMINITY_API_URL ?? "",
+  security: { apiKey: process.env.OMINITY_API_KEY ?? "" },
+});
+
+await sdk.tracking.events.track({
+  event: "page_view",
+  url: "https://shop.example.com/products/desk-lamp",
+  visitorId,
+});
+```
+
+`TrackingProvider` automatically tracks:
+
+- `page_view` on initial render and App Router navigation
+- `session_start` once per browser tab/session
+- `scroll_depth` at `25/50/75/100`
+- `outbound_click` for external links
+- `file_download` for download/file links
+- `form_submit` for native form submissions
+
+It also supports opt-in custom click events via `data-ominity-event`:
+
+```tsx
+<button
+  data-ominity-event="button_click"
+  data-ominity-title="Hero CTA"
+  data-ominity-metadata='{"placement":"hero"}'
+>
+  Shop now
+</button>
+```
+
 ## Public modules
 
 - `@ominity/next` – full surface
@@ -375,6 +453,9 @@ export const POST = (request: Request) => handler(request);
 - `@ominity/next/forms` – Ominity forms renderer + submit helpers
 - `@ominity/next/commerce` – SDK-backed commerce client + normalized cart/order/payment models
 - `@ominity/next/auth` – SDK-backed OAuth2, MFA, recovery code, password reset, and signed sessions
+- `@ominity/next/tracking` – visitor UUID cookie helpers for first-party tracking
+- `@ominity/next/tracking/provider` – auto-tracking client provider for App Router
+- `@ominity/next/tracking/proxy` – server-side first-party proxy helper
 
 ## Documentation
 

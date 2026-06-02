@@ -64,10 +64,18 @@ export interface CommerceClientAdapter {
   getPayment?(id: string, input?: { include?: string }): Promise<CommercePayment | null>;
 }
 
+export type CommerceVisitorIdResolver = () =>
+  | string
+  | null
+  | undefined
+  | Promise<string | null | undefined>;
+
 export interface CommerceClientOptions {
   readonly sdk: OminityOptions;
   readonly debug?: CommerceClientDebugOptions;
   readonly adapter?: CommerceClientAdapter;
+  readonly visitorIdResolver?: CommerceVisitorIdResolver;
+  readonly visitorIdFieldName?: string;
 }
 
 export interface CommerceListCartsInput {

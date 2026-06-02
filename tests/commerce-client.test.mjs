@@ -114,3 +114,51 @@ test("createCommerceClient returns SDK-shaped shipping and payment methods", asy
   assert.equal(paymentMethods[0].id, 9);
   assert.equal(paymentMethods[0].label, "iDEAL");
 });
+
+test("createCommerceClient injects visitorId in cart and order payloads", async () => {
+  const captured = {
+    createCart: null,
+    updateCart: null,
+    createOrder: null,
+  };
+
+  const client = createCommerceClient({
+    sdk: {
+      serverURL: "https://example.ominity.test/api",
+    },
+    visitorIdResolver: async () => "648cd59e-8f79-40a7-a4de-1fb65b42c00c",
+    adapter: {
+      async createCart(data) {
+        captured.createCart = data;
+        return { id: "cart_1" };
+      },
+      async updateCart(_cartId, data) {
+        captured.updateCart = data;
+        return { id: "cart_1" };
+      },
+      async createOrder(data) {
+        captured.createOrder = data;
+        return { id: "order_1" };
+      },
+    },
+  });
+
+  await client.createCart({
+    data: { type: "default" },
+  });
+  await client.updateCart({
+    cartId: "cart_1",
+    data: {
+      visitorId: "already-set",
+      note: "keep current visitor",
+    },
+  });
+  await client.createOrder({
+    data: { cartId: "cart_1" },
+  });
+
+  assert.equal(captured.createCart.visitorId, "648cd59e-8f79-40a7-a4de-1fb65b42c00c");
+  assert.equal(captured.createCart.type, "default");
+  assert.equal(captured.updateCart.visitorId, "already-set");
+  assert.equal(captured.createOrder.visitorId, "648cd59e-8f79-40a7-a4de-1fb65b42c00c");
+});

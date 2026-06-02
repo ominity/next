@@ -28,6 +28,7 @@ import type {
   CommerceListShippingMethodsInput,
   CommerceUpdateCartInput,
   CommerceUpdateCartItemInput,
+  CommerceVisitorIdResolver,
 } from "./types.js";
 
 type UnknownRecord = Record<string, unknown>;
@@ -50,6 +51,55 @@ type OminityWithInternals = Ominity & {
 
 function asRecord(value: unknown): UnknownRecord {
   return typeof value === "object" && value !== null ? value as UnknownRecord : {};
+}
+
+function asNonEmptyString(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function resolveVisitorIdFieldName(fieldName: string | undefined): string {
+  return asNonEmptyString(fieldName) ?? "visitorId";
+}
+
+function payloadHasVisitorId(payload: UnknownRecord, fieldName: string): boolean {
+  return typeof asNonEmptyString(payload[fieldName]) === "string";
+}
+
+async function resolveVisitorId(
+  resolver: CommerceVisitorIdResolver | undefined,
+): Promise<string | undefined> {
+  if (!resolver) {
+    return;
+  }
+
+  return asNonEmptyString(await resolver());
+}
+
+async function withResolvedVisitorId(
+  payload: Readonly<Record<string, unknown>> | undefined,
+  fieldName: string,
+  resolver: CommerceVisitorIdResolver | undefined,
+): Promise<Readonly<Record<string, unknown>>> {
+  const normalizedPayload: UnknownRecord = {
+    ...asRecord(payload),
+  };
+
+  if (payloadHasVisitorId(normalizedPayload, fieldName)) {
+    return normalizedPayload;
+  }
+
+  const visitorId = await resolveVisitorId(resolver);
+  if (!visitorId) {
+    return normalizedPayload;
+  }
+
+  normalizedPayload[fieldName] = visitorId;
+  return normalizedPayload;
 }
 
 function patchHookContextOptions(sdk: Ominity): Ominity {
@@ -172,6 +222,8 @@ function asTypedRecord<T>(value: unknown): T {
 export function createCommerceClient(options: CommerceClientOptions): CommerceClient {
   const sdk = patchHookContextOptions(new Ominity(options.sdk));
   const debug = createCommerceDebugLogger(options.debug, "commerce-client");
+  const visitorIdResolver = options.visitorIdResolver;
+  const visitorIdFieldName = resolveVisitorIdFieldName(options.visitorIdFieldName);
 
   return {
     async listCarts(input: CommerceListCartsInput = {}) {
@@ -192,10 +244,15 @@ export function createCommerceClient(options: CommerceClientOptions): CommerceCl
 
     async createCart(input: CommerceCreateCartInput = {}) {
       debug.emit("debug", "Creating cart", input);
+      const cartData = await withResolvedVisitorId(
+        input.data,
+        visitorIdFieldName,
+        visitorIdResolver,
+      );
 
       const payload = options.adapter?.createCart
-        ? await options.adapter.createCart(input.data ?? {})
-        : await sdk.commerce.carts.create(input.data ?? {});
+        ? await options.adapter.createCart(cartData)
+        : await sdk.commerce.carts.create(cartData);
 
       return payload;
     },
@@ -231,9 +288,14 @@ export function createCommerceClient(options: CommerceClientOptions): CommerceCl
       debug.emit("debug", "Updating cart", input);
 
       try {
+        const updateData = await withResolvedVisitorId(
+          input.data,
+          visitorIdFieldName,
+          visitorIdResolver,
+        );
         const payload = options.adapter?.updateCart
-          ? await options.adapter.updateCart(input.cartId, input.data)
-          : await sdk.commerce.carts.update(input.cartId, input.data as Record<string, any>);
+          ? await options.adapter.updateCart(input.cartId, updateData)
+          : await sdk.commerce.carts.update(input.cartId, updateData as Record<string, any>);
 
         return payload;
       } catch (error) {
@@ -454,9 +516,14 @@ export function createCommerceClient(options: CommerceClientOptions): CommerceCl
       debug.emit("debug", "Creating order", input);
 
       try {
+        const orderData = await withResolvedVisitorId(
+          input.data,
+          visitorIdFieldName,
+          visitorIdResolver,
+        );
         const payload = options.adapter?.createOrder
-          ? await options.adapter.createOrder(input.data)
-          : await sdk.commerce.orders.create(input.data as Record<string, any>);
+          ? await options.adapter.createOrder(orderData)
+          : await sdk.commerce.orders.create(orderData as Record<string, any>);
 
         return payload;
       } catch (error) {
