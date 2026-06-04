@@ -9,8 +9,20 @@ export type {
   TrackEventRequest,
   TrackingEventMetadata,
   TrackingEventName,
+  TrackingResourceRelation,
+  TrackingResourceRoute,
   TrackingEventUtm,
 } from "./tracking-types.js";
+export type {
+  BuildTrackingPageMetadataOptions,
+  BuildTrackingResourceRelationOptions,
+  TrackingResourceRelationInput,
+} from "./tracking-relations.js";
+export {
+  buildTrackingPageMetadata,
+  buildTrackingResourceRelation,
+  buildTrackingResourceRoute,
+} from "./tracking-relations.js";
 
 export interface VisitorIdCookieOptions {
   readonly name?: string;

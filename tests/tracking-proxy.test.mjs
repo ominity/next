@@ -72,6 +72,8 @@ test("createOminityTrackingProxyHandler forwards payload and client headers to O
   assert.equal(forwardedHeaders.get("authorization"), "Bearer secret");
   assert.equal(forwardedHeaders.get("user-agent"), "Browser UA");
   assert.equal(forwardedHeaders.get("x-forwarded-for"), "203.0.113.10");
+  assert.equal(forwardedHeaders.get("x-real-ip"), "203.0.113.10");
+  assert.equal(forwardedHeaders.get("x-ominity-client-ip"), "203.0.113.10");
   assert.equal(forwardedHeaders.get("x-request-id"), "req_123");
   assert.equal(forwardedPayload.event, "page_view");
   assert.equal(forwardedPayload.visitorId, "648cd59e-8f79-40a7-a4de-1fb65b42c00c");

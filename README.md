@@ -432,6 +432,34 @@ await sdk.tracking.events.track({
 - `file_download` for download/file links
 - `form_submit` for native form submissions
 
+The proxy forwards the original browser IP headers to Ominity, and the tracking controller can resolve them explicitly. This avoids storing the Next server IP when events are proxied server-to-server.
+
+If a page originates from an Ominity resource such as a CMS page or product, register that page context once so every auto-tracked event on the page carries a stable backend relation:
+
+```tsx
+import { TrackingPageMetadata } from "@ominity/next/tracking/provider";
+
+<TrackingPageMetadata
+  origin={page}
+  originOptions={{
+    locale: "en",
+    path: "/about",
+    canonicalPath: "/en/about",
+    route: {
+      resource: "route",
+      name: "page",
+      locale: "en",
+      parameters: {
+        id: page.id,
+        slug: page.slug,
+      },
+    },
+  }}
+/>
+```
+
+This adds `origin_resource` metadata to the emitted event payloads.
+
 It also supports opt-in custom click events via `data-ominity-event`:
 
 ```tsx

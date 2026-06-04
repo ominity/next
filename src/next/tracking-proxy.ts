@@ -48,29 +48,45 @@ const isForwardTrackingResult = (input: unknown): input is ForwardTrackingResult
 };
 
 function getClientIp(request: Request): string | null {
-  const forwarded = request.headers.get("x-forwarded-for");
-  if (forwarded) {
-    const [first] = forwarded.split(",").map((value) => value.trim());
-    if (first) {
-      return first;
-    }
-  }
-
   const headerNames = [
+    "x-ominity-client-ip",
+    "x-vercel-forwarded-for",
+    "x-forwarded-for",
     "x-real-ip",
     "cf-connecting-ip",
     "fastly-client-ip",
     "true-client-ip",
+    "x-client-ip",
+    "x-nf-client-connection-ip",
+    "fly-client-ip",
   ];
 
   for (const name of headerNames) {
     const value = request.headers.get(name);
     if (value) {
-      return value;
+      if (name === "x-forwarded-for") {
+        const [first] = value.split(",").map((entry) => entry.trim());
+        if (first) {
+          return first;
+        }
+
+        continue;
+      }
+
+      return value.trim();
     }
   }
 
   return null;
+}
+
+function getForwardedForChain(request: Request, clientIp: string | null): string | null {
+  const forwarded = request.headers.get("x-forwarded-for");
+  if (forwarded && forwarded.trim().length > 0) {
+    return forwarded.trim();
+  }
+
+  return clientIp;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -233,8 +249,14 @@ export function createOminityTrackingProxyHandler(
       }
 
       const clientIp = getClientIp(request);
+      const forwardedFor = getForwardedForChain(request, clientIp);
+      if (forwardedFor) {
+        headers.set("X-Forwarded-For", forwardedFor);
+      }
+
       if (clientIp) {
-        headers.set("X-Forwarded-For", clientIp);
+        headers.set("X-Real-IP", clientIp);
+        headers.set("X-Ominity-Client-IP", clientIp);
       }
 
       const ominityResponse = await fetchImpl(`${baseUrl}/v1/tracking/events`, {

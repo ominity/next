@@ -2,10 +2,12 @@
 
 import { usePathname, useSearchParams } from "next/navigation.js";
 import type { ReactNode } from "react";
-import { useEffect, useRef } from "react";
+import { createContext, useContext, useEffect, useLayoutEffect, useRef } from "react";
 
 import {
+  buildTrackingPageMetadata,
   ensureVisitorIdCookie,
+  type BuildTrackingPageMetadataOptions,
   type VisitorIdCookieOptions,
 } from "./tracking.js";
 import type {
@@ -73,6 +75,15 @@ export interface TrackingProviderProps {
     | TrackingEventMetadata
     | (() => TrackingEventMetadata | null | undefined);
 }
+
+export interface TrackingPageMetadataProps extends BuildTrackingPageMetadataOptions {}
+
+interface TrackingPageMetadataRegistry {
+  readonly setPageMetadata: (key: symbol, metadata: TrackingEventMetadata | null) => void;
+  readonly clearPageMetadata: (key: symbol) => void;
+}
+
+const TrackingPageMetadataContext = createContext<TrackingPageMetadataRegistry | null>(null);
 
 function asNonEmptyString(value: unknown): string | undefined {
   if (typeof value !== "string") {
@@ -328,7 +339,6 @@ function parseDatasetMetadata(element: HTMLElement): TrackingEventMetadata | und
 function buildBaseMetadata(
   pageKey: string,
   previousUrl: string | null,
-  extraMetadata: TrackingEventMetadata | null | undefined,
 ): TrackingEventMetadata {
   const locale = asNonEmptyString(document.documentElement.lang)
     ?? asNonEmptyString(navigator.language);
@@ -347,10 +357,7 @@ function buildBaseMetadata(
     screen_height: window.screen.height,
   };
 
-  return {
-    ...baseMetadata,
-    ...(extraMetadata ?? {}),
-  };
+  return baseMetadata;
 }
 
 function resolveExtraMetadata(
@@ -365,6 +372,43 @@ function resolveExtraMetadata(
   } catch {
     return;
   }
+}
+
+function resolveRegisteredPageMetadata(
+  entries: ReadonlyMap<symbol, TrackingEventMetadata>,
+): TrackingEventMetadata | null {
+  let current: TrackingEventMetadata | null = null;
+
+  for (const value of entries.values()) {
+    current = value;
+  }
+
+  return current;
+}
+
+export function TrackingPageMetadata(props: TrackingPageMetadataProps) {
+  const registry = useContext(TrackingPageMetadataContext);
+  const keyRef = useRef<symbol | null>(null);
+
+  if (keyRef.current === null) {
+    keyRef.current = Symbol("tracking-page-metadata");
+  }
+
+  const metadata = buildTrackingPageMetadata(props) ?? null;
+
+  useLayoutEffect(() => {
+    if (!registry || keyRef.current === null) {
+      return;
+    }
+
+    registry.setPageMetadata(keyRef.current, metadata);
+
+    return () => {
+      registry.clearPageMetadata(keyRef.current!);
+    };
+  }, [metadata, registry]);
+
+  return null;
 }
 
 function resolveSearch(searchParams: ReturnType<typeof useSearchParams>): string {
@@ -400,6 +444,21 @@ export function TrackingProvider(props: TrackingProviderProps) {
   const lastTrackedUrlRef = useRef<string | null>(null);
   const sampledInRef = useRef<boolean | null>(null);
   const trackedScrollDepthsRef = useRef<Set<number>>(new Set());
+  const pageMetadataEntriesRef = useRef<Map<symbol, TrackingEventMetadata>>(new Map());
+  const pageMetadataRegistryRef = useRef<TrackingPageMetadataRegistry>({
+    setPageMetadata(key, metadata) {
+      if (metadata && Object.keys(metadata).length > 0) {
+        pageMetadataEntriesRef.current.delete(key);
+        pageMetadataEntriesRef.current.set(key, metadata);
+        return;
+      }
+
+      pageMetadataEntriesRef.current.delete(key);
+    },
+    clearPageMetadata(key) {
+      pageMetadataEntriesRef.current.delete(key);
+    },
+  });
 
   const enabled = props.enabled !== false;
   const pageKey = `${pathname ?? ""}${resolveSearch(searchParams)}`;
@@ -446,8 +505,11 @@ export function TrackingProvider(props: TrackingProviderProps) {
 
     const visitorId = ensureVisitorId();
     const extraMetadata = resolveExtraMetadata(props.extraMetadata);
+    const pageMetadata = resolveRegisteredPageMetadata(pageMetadataEntriesRef.current);
     const metadata = {
-      ...buildBaseMetadata(pageKey, lastTrackedUrlRef.current, extraMetadata),
+      ...buildBaseMetadata(pageKey, lastTrackedUrlRef.current),
+      ...(extraMetadata ?? {}),
+      ...(pageMetadata ?? {}),
       ...asRecord(payload.metadata),
     };
     const referrer = payload.referrer ?? document.referrer ?? undefined;
@@ -700,5 +762,9 @@ export function TrackingProvider(props: TrackingProviderProps) {
     };
   }, [enabled, props.eventNames?.formSubmit, props.sampleRate, props.trackFormSubmissions]);
 
-  return <>{props.children}</>;
+  return (
+    <TrackingPageMetadataContext.Provider value={pageMetadataRegistryRef.current}>
+      {props.children}
+    </TrackingPageMetadataContext.Provider>
+  );
 }
