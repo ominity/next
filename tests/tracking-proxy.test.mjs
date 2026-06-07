@@ -110,3 +110,82 @@ test("createOminityTrackingProxyHandler supports custom forwardEvent transport",
   assert.equal(body.queued, true);
   assert.equal(body.event, "page_view");
 });
+
+test("createOminityTrackingProxyHandler prefers a public client IP over loopback forwarded values", async () => {
+  let forwardedHeaders = null;
+
+  const fetchImpl = async (_input, init) => {
+    forwardedHeaders = new Headers(init.headers);
+
+    return new Response(JSON.stringify({
+      success: true,
+    }), {
+      status: 200,
+      headers: {
+        "Content-Type": "application/json",
+      },
+    });
+  };
+
+  const handler = createOminityTrackingProxyHandler({
+    ominityApiKey: "secret",
+    ominityBaseUrl: "https://example.ominity.test/api",
+    fetchImpl,
+  });
+
+  const response = await handler(new Request("https://shop.example.com/api/omt", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Forwarded-For": "::ffff:127.0.0.1",
+      "X-Real-IP": "198.51.100.24",
+    },
+    body: JSON.stringify({
+      event: "page_view",
+    }),
+  }));
+
+  assert.equal(response.status, 200);
+  assert.equal(forwardedHeaders.get("x-real-ip"), "198.51.100.24");
+  assert.equal(forwardedHeaders.get("x-ominity-client-ip"), "198.51.100.24");
+  assert.equal(forwardedHeaders.get("x-forwarded-for"), "198.51.100.24, 127.0.0.1");
+});
+
+test("createOminityTrackingProxyHandler resolves RFC 7239 Forwarded header values", async () => {
+  let forwardedHeaders = null;
+
+  const fetchImpl = async (_input, init) => {
+    forwardedHeaders = new Headers(init.headers);
+
+    return new Response(JSON.stringify({
+      success: true,
+    }), {
+      status: 200,
+      headers: {
+        "Content-Type": "application/json",
+      },
+    });
+  };
+
+  const handler = createOminityTrackingProxyHandler({
+    ominityApiKey: "secret",
+    ominityBaseUrl: "https://example.ominity.test/api",
+    fetchImpl,
+  });
+
+  const response = await handler(new Request("https://shop.example.com/api/omt", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Forwarded: 'for=203.0.113.77;proto=https;by=203.0.113.1',
+    },
+    body: JSON.stringify({
+      event: "page_view",
+    }),
+  }));
+
+  assert.equal(response.status, 200);
+  assert.equal(forwardedHeaders.get("x-real-ip"), "203.0.113.77");
+  assert.equal(forwardedHeaders.get("x-ominity-client-ip"), "203.0.113.77");
+  assert.equal(forwardedHeaders.get("x-forwarded-for"), "203.0.113.77");
+});

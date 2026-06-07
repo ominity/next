@@ -47,43 +47,173 @@ const isForwardTrackingResult = (input: unknown): input is ForwardTrackingResult
   return "status" in input && typeof (input as { status?: unknown }).status === "number";
 };
 
-function getClientIp(request: Request): string | null {
-  const headerNames = [
-    "x-ominity-client-ip",
-    "x-vercel-forwarded-for",
-    "x-forwarded-for",
-    "x-real-ip",
-    "cf-connecting-ip",
-    "fastly-client-ip",
-    "true-client-ip",
-    "x-client-ip",
-    "x-nf-client-connection-ip",
-    "fly-client-ip",
-  ];
+function normalizeIpCandidate(value: string): string | null {
+  let normalized = value.trim();
+  if (!normalized) {
+    return null;
+  }
 
-  for (const name of headerNames) {
-    const value = request.headers.get(name);
-    if (value) {
-      if (name === "x-forwarded-for") {
-        const [first] = value.split(",").map((entry) => entry.trim());
-        if (first) {
-          return first;
-        }
+  if (normalized.startsWith("\"") && normalized.endsWith("\"")) {
+    normalized = normalized.slice(1, -1).trim();
+  }
 
-        continue;
-      }
+  if (normalized.startsWith("for=")) {
+    normalized = normalized.slice(4).trim();
+  }
 
-      return value.trim();
+  if (normalized.startsWith("[") && normalized.includes("]")) {
+    const closingBracketIndex = normalized.indexOf("]");
+    normalized = normalized.slice(1, closingBracketIndex).trim();
+  } else {
+    const colonCount = (normalized.match(/:/g) ?? []).length;
+    if (colonCount === 1 && normalized.includes(".")) {
+      const [host] = normalized.split(":");
+      normalized = host?.trim() ?? normalized;
     }
   }
 
-  return null;
+  normalized = normalized.replace(/^::ffff:/i, "").trim();
+
+  if (!normalized || normalized.toLowerCase() === "unknown") {
+    return null;
+  }
+
+  return normalized;
+}
+
+function isPublicIpv4(ip: string): boolean {
+  const octets = ip.split(".").map((value) => Number.parseInt(value, 10));
+  if (octets.length !== 4 || octets.some((value) => !Number.isInteger(value) || value < 0 || value > 255)) {
+    return false;
+  }
+
+  const first = octets[0];
+  const second = octets[1];
+
+  if (typeof first !== "number" || typeof second !== "number") {
+    return false;
+  }
+
+  if (first === 10 || first === 127 || first === 0) {
+    return false;
+  }
+
+  if (first === 169 && second === 254) {
+    return false;
+  }
+
+  if (first === 172 && second >= 16 && second <= 31) {
+    return false;
+  }
+
+  if (first === 192 && second === 168) {
+    return false;
+  }
+
+  if (first >= 224) {
+    return false;
+  }
+
+  return true;
+}
+
+function isPublicIpv6(ip: string): boolean {
+  const normalized = ip.toLowerCase();
+
+  if (normalized === "::1" || normalized === "::") {
+    return false;
+  }
+
+  const first = normalized[0];
+  const second = normalized[1];
+  const third = normalized[2];
+
+  if (first === "f" && (second === "c" || second === "d")) {
+    return false;
+  }
+
+  if (first === "f" && second === "e" && typeof third === "string" && ["8", "9", "a", "b"].includes(third)) {
+    return false;
+  }
+
+  return true;
+}
+
+function isPublicIp(ip: string): boolean {
+  if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(ip)) {
+    return isPublicIpv4(ip);
+  }
+
+  if (ip.includes(":")) {
+    return isPublicIpv6(ip);
+  }
+
+  return false;
+}
+
+function readHeaderCandidates(request: Request, headerName: string): string[] {
+  const value = request.headers.get(headerName);
+  if (!value) {
+    return [];
+  }
+
+  if (headerName === "forwarded") {
+    return value
+      .split(",")
+      .flatMap((entry) => entry.split(";"))
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.toLowerCase().startsWith("for="))
+      .map((entry) => normalizeIpCandidate(entry))
+      .filter((entry): entry is string => Boolean(entry));
+  }
+
+  if (headerName === "x-forwarded-for") {
+    return value
+      .split(",")
+      .map((entry) => normalizeIpCandidate(entry))
+      .filter((entry): entry is string => Boolean(entry));
+  }
+
+  const normalized = normalizeIpCandidate(value);
+  return normalized ? [normalized] : [];
+}
+
+function getClientIpCandidates(request: Request): string[] {
+  const headerNames = [
+    "x-ominity-client-ip",
+    "x-vercel-forwarded-for",
+    "cf-connecting-ip",
+    "true-client-ip",
+    "fastly-client-ip",
+    "fly-client-ip",
+    "x-client-ip",
+    "x-nf-client-connection-ip",
+    "x-real-ip",
+    "forwarded",
+    "x-forwarded-for",
+  ];
+
+  return headerNames.flatMap((headerName) => readHeaderCandidates(request, headerName));
+}
+
+function getClientIp(request: Request): string | null {
+  const candidates = getClientIpCandidates(request);
+
+  for (const candidate of candidates) {
+    if (isPublicIp(candidate)) {
+      return candidate;
+    }
+  }
+
+  return candidates[0] ?? null;
 }
 
 function getForwardedForChain(request: Request, clientIp: string | null): string | null {
-  const forwarded = request.headers.get("x-forwarded-for");
-  if (forwarded && forwarded.trim().length > 0) {
-    return forwarded.trim();
+  const forwarded = readHeaderCandidates(request, "x-forwarded-for");
+  const values = clientIp ? [clientIp, ...forwarded] : forwarded;
+  const unique = values.filter((value, index) => values.indexOf(value) === index);
+  if (unique.length > 0) {
+    return unique.join(", ");
   }
 
   return clientIp;
