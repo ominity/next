@@ -111,7 +111,7 @@ test("createOminityTrackingProxyHandler supports custom forwardEvent transport",
   assert.equal(body.event, "page_view");
 });
 
-test("createOminityTrackingProxyHandler prefers a public client IP over loopback forwarded values", async () => {
+test("createOminityTrackingProxyHandler prefers explicit client IP headers over forwarded fallback values", async () => {
   let forwardedHeaders = null;
 
   const fetchImpl = async (_input, init) => {
