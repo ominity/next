@@ -24,6 +24,31 @@ const DEFAULT_MAX_QUEUE_SIZE = 50;
 
 const DOWNLOAD_FILE_PATTERN =
   /\.(csv|doc|docx|ics|jpg|jpeg|json|mp3|mp4|pdf|png|ppt|pptx|svg|txt|webp|xls|xlsx|zip)(\?.*)?$/i;
+const TRACKING_QUERY_PARAM_KEYS = new Set([
+  "_ga",
+  "_gac",
+  "_gcl_au",
+  "_gl",
+  "_gs",
+  "_up",
+  "dclid",
+  "fbclid",
+  "gad_source",
+  "gbraid",
+  "gclid",
+  "igshid",
+  "li_fat_id",
+  "mc_cid",
+  "mc_eid",
+  "msclkid",
+  "srsltid",
+  "ttclid",
+  "twclid",
+  "vero_conv",
+  "vero_id",
+  "wbraid",
+]);
+const TRACKING_QUERY_PARAM_PREFIXES = ["utm_", "_ga_", "_gac_", "_gcl_", "gad_"];
 
 type QueueEntry = TrackEventRequest;
 type QueueOptions = {
@@ -169,6 +194,29 @@ function normalizeThresholds(
 
   normalized.sort((left, right) => left - right);
   return normalized;
+}
+
+function shouldStripTrackingQueryParam(key: string): boolean {
+  const normalized = key.trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+
+  if (TRACKING_QUERY_PARAM_KEYS.has(normalized)) {
+    return true;
+  }
+
+  return TRACKING_QUERY_PARAM_PREFIXES.some((prefix) => normalized.startsWith(prefix));
+}
+
+function stripTrackingQueryParams(params: URLSearchParams): void {
+  for (const key of Array.from(new Set(params.keys()))) {
+    if (!shouldStripTrackingQueryParam(key)) {
+      continue;
+    }
+
+    params.delete(key);
+  }
 }
 
 function readQueue(queueKey: string): QueueEntry[] {
@@ -343,10 +391,11 @@ function buildBaseMetadata(
   const locale = asNonEmptyString(document.documentElement.lang)
     ?? asNonEmptyString(navigator.language);
   const timezone = asNonEmptyString(Intl.DateTimeFormat().resolvedOptions().timeZone);
+  const currentUrl = resolveNormalizedCurrentUrl();
   const baseMetadata: Record<string, unknown> = {
     page_key: pageKey,
-    pathname: window.location.pathname,
-    search: window.location.search || undefined,
+    pathname: currentUrl.pathname,
+    search: currentUrl.search || undefined,
     hash: window.location.hash || undefined,
     previous_url: previousUrl ?? undefined,
     locale,
@@ -413,7 +462,15 @@ export function TrackingPageMetadata(props: TrackingPageMetadataProps) {
 
 function resolveSearch(searchParams: ReturnType<typeof useSearchParams>): string {
   const value = searchParams?.toString();
-  return value ? `?${value}` : "";
+  if (!value) {
+    return "";
+  }
+
+  const params = new URLSearchParams(value);
+  stripTrackingQueryParams(params);
+
+  const normalized = params.toString();
+  return normalized ? `?${normalized}` : "";
 }
 
 function normalizeSampleRate(sampleRate: number | undefined): number {
@@ -433,7 +490,29 @@ function readClosestTrackableElement(target: EventTarget | null): HTMLElement | 
 }
 
 function resolveCurrentUrl(): string {
-  return window.location.href;
+  return resolveNormalizedCurrentUrl().toString();
+}
+
+function resolveNormalizedCurrentUrl(): URL {
+  const url = new URL(window.location.href);
+  stripTrackingQueryParams(url.searchParams);
+
+  return url;
+}
+
+function normalizeUrlValue(value: string | null | undefined): string | undefined {
+  const normalizedValue = asNonEmptyString(value);
+  if (!normalizedValue) {
+    return;
+  }
+
+  try {
+    const url = new URL(normalizedValue, window.location.href);
+    stripTrackingQueryParams(url.searchParams);
+    return url.toString();
+  } catch {
+    return normalizedValue;
+  }
 }
 
 export function TrackingProvider(props: TrackingProviderProps) {
@@ -512,7 +591,7 @@ export function TrackingProvider(props: TrackingProviderProps) {
       ...(pageMetadata ?? {}),
       ...asRecord(payload.metadata),
     };
-    const referrer = payload.referrer ?? document.referrer ?? undefined;
+    const referrer = normalizeUrlValue(payload.referrer ?? document.referrer ?? undefined);
     const utm = payload.utm ?? buildUtmFromLocation(window.location);
 
     const trackEventRequest: TrackEventRequest = {
@@ -521,7 +600,7 @@ export function TrackingProvider(props: TrackingProviderProps) {
       timestamp: new Date().toISOString(),
       metadata,
       ...(typeof props.userId === "number" ? { userId: props.userId } : {}),
-      ...(payload.url ? { url: payload.url } : { url: resolveCurrentUrl() }),
+      ...(payload.url ? { url: normalizeUrlValue(payload.url) ?? payload.url } : { url: resolveCurrentUrl() }),
       ...(payload.title ? { title: payload.title } : { title: document.title }),
       ...(referrer ? { referrer } : {}),
       ...(utm ? { utm } : {}),
@@ -596,7 +675,7 @@ export function TrackingProvider(props: TrackingProviderProps) {
       event: props.eventNames?.pageView ?? "page_view",
       title: document.title,
       metadata: {
-        previous_url: previousUrl ?? document.referrer ?? undefined,
+        previous_url: normalizeUrlValue(previousUrl ?? document.referrer ?? undefined),
       },
     });
 
