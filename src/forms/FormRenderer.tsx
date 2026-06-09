@@ -36,7 +36,10 @@ import {
   needsClientIp,
 } from "./utils/metadata.js";
 import { useRecaptcha } from "./recaptcha/useRecaptcha.js";
-import { resolveFormRecaptchaConfig } from "./recaptcha/config.js";
+import {
+  isRecaptchaField,
+  resolveFormRecaptchaConfig,
+} from "./recaptcha/config.js";
 import type { SubmitResult, SubmissionPayload } from "./types.js";
 import {
   FieldError,
@@ -46,6 +49,7 @@ import {
   CheckboxField,
   MultiCheckboxField,
   PhoneField,
+  RecaptchaField,
   ButtonField,
   HiddenField,
   HoneypotField,
@@ -192,12 +196,41 @@ const FormRenderer = <T,>({
   components,
   inlineBreakpoint = "md",
 }: FormRendererProps<T>) => {
-  const fields = useMemo(() => {
+  const allFields = useMemo(() => {
     const incoming = form?._embedded?.form_fields ?? [];
-    return sortFields(incoming).filter((field) =>
-      SUPPORTED_FIELDS.has(field.type),
-    );
+    return sortFields(incoming);
   }, [form]);
+
+  const resolvedRecaptcha = useMemo(
+    () => resolveFormRecaptchaConfig(form, recaptcha),
+    [form, recaptcha],
+  );
+
+  const recaptchaField = useMemo(
+    () => allFields.find((field) => isRecaptchaField(field)) ?? null,
+    [allFields],
+  );
+
+  const hasRecaptchaProtection = Boolean(recaptcha || recaptchaField);
+  const shouldRenderInlineRecaptcha = Boolean(
+    recaptchaField && resolvedRecaptcha?.version === "v2-checkbox",
+  );
+
+  const fields = useMemo(
+    () =>
+      allFields.filter((field) => SUPPORTED_FIELDS.has(field.type)),
+    [allFields],
+  );
+
+  const displayFields = useMemo(
+    () =>
+      allFields.filter(
+        (field) =>
+          SUPPORTED_FIELDS.has(field.type) ||
+          (isRecaptchaField(field) && shouldRenderInlineRecaptcha),
+      ),
+    [allFields, shouldRenderInlineRecaptcha],
+  );
 
   const metadataFields = useMemo(
     () => fields.filter((field) => field.type === "metadata"),
@@ -224,6 +257,7 @@ const FormRenderer = <T,>({
     useState<Record<string, MetadataValue>>(initialMetadata);
 
   const [submissionError, setSubmissionError] = useState<string | null>(null);
+  const [recaptchaError, setRecaptchaError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isBelowInlineBreakpoint, setIsBelowInlineBreakpoint] =
     useState(false);
@@ -303,14 +337,14 @@ const FormRenderer = <T,>({
   }, [resolvedInlineBreakpoint]);
 
   const hasInlineFields = useMemo(
-    () => fields.some((field) => field.isInline),
-    [fields],
+    () => displayFields.some((field) => field.isInline),
+    [displayFields],
   );
 
   const inlineLayoutEnabled = hasInlineFields && !isBelowInlineBreakpoint;
 
   const rows = useMemo<FieldRow[]>(() => {
-    if (!fields.length) {
+    if (!displayFields.length) {
       return [];
     }
 
@@ -330,7 +364,7 @@ const FormRenderer = <T,>({
       inlineBuffer = [];
     };
 
-    fields.forEach((field) => {
+    displayFields.forEach((field) => {
       if (field.isInline) {
         inlineBuffer.push(field);
         return;
@@ -345,7 +379,7 @@ const FormRenderer = <T,>({
 
     flushInlineBuffer();
     return result;
-  }, [fields]);
+  }, [displayFields]);
 
   const theme = useMemo(
     () => resolveTheme(styled, themeOverride),
@@ -379,11 +413,13 @@ const FormRenderer = <T,>({
     });
   }, [metadataFields, metadataValues, setValue]);
 
-  const resolvedRecaptcha = useMemo(
-    () => resolveFormRecaptchaConfig(form, recaptcha),
-    [form, recaptcha],
-  );
   const recaptchaControl = useRecaptcha(resolvedRecaptcha);
+
+  useEffect(() => {
+    if (recaptchaControl.token) {
+      setRecaptchaError(null);
+    }
+  }, [recaptchaControl.token]);
 
   const getSlotClass = (slot: ThemeSlot, field?: OminityFormField): string =>
     resolveSlotClasses({
@@ -405,12 +441,18 @@ const FormRenderer = <T,>({
   const normalizeData = (values: FormValues): Record<string, unknown> =>
     normalizeSubmissionData(values, fields);
 
+  const getRecaptchaFailureMessage = (): string =>
+    recaptchaControl.error ??
+    recaptchaField?.validation?.message ??
+    "Complete the security check.";
+
   const onSubmit = handleSubmit(async (values) => {
     if (submitDisabled) {
       return;
     }
 
     setSubmissionError(null);
+    setRecaptchaError(null);
     setIsSubmitting(true);
 
     const honeypotTriggered = honeypotFieldNames.some((name) => {
@@ -423,11 +465,26 @@ const FormRenderer = <T,>({
       return;
     }
 
+    if (hasRecaptchaProtection && !resolvedRecaptcha) {
+      setSubmissionError("Security check is unavailable.");
+      setIsSubmitting(false);
+      return;
+    }
+
     let recaptchaToken: string | null = null;
     if (resolvedRecaptcha) {
-      recaptchaToken = await recaptchaControl.execute();
+      try {
+        recaptchaToken = await recaptchaControl.execute();
+      } catch {
+        recaptchaToken = null;
+      }
       if (!recaptchaToken) {
-        setSubmissionError("Complete the security check.");
+        const message = getRecaptchaFailureMessage();
+        if (resolvedRecaptcha.version === "v2-checkbox") {
+          setRecaptchaError(message);
+        } else {
+          setSubmissionError(message);
+        }
         setIsSubmitting(false);
         return;
       }
@@ -488,6 +545,7 @@ const FormRenderer = <T,>({
     const helperId = field.helper ? `${inputId}-helper` : undefined;
     const errorMessage = getErrorMessage(errors, field);
     const errorId = errorMessage ? `${inputId}-error` : undefined;
+    const labelId = field.label ? `${inputId}-label` : undefined;
 
     const labelClass = mergeClasses(
       getSlotClass("field.label", field),
@@ -731,10 +789,41 @@ const FormRenderer = <T,>({
             )}
           />
         );
+      case "recaptcha":
+        if (!resolvedRecaptcha || resolvedRecaptcha.version !== "v2-checkbox") {
+          return null;
+        }
+        return (
+          <RecaptchaField
+            key={field.id}
+            field={field}
+            config={resolvedRecaptcha}
+            inputId={inputId}
+            labelId={labelId}
+            helperId={helperId}
+            errorId={errorId}
+            wrapperClass={getSlotClass("field.wrapper", field)}
+            wrapperStyle={wrapperStyle}
+            labelClass={labelClass}
+            containerClass={getSlotClass("field.recaptcha", field)}
+            helperClass={getSlotClass("field.helper", field)}
+            errorClass={getSlotClass("field.error", field)}
+            helperText={field.helper}
+            errorMessage={recaptchaError ?? recaptchaControl.error}
+            describedBy={describedBy}
+            containerRef={recaptchaControl.containerRef}
+          />
+        );
       default:
         return null;
     }
   };
+
+  const shouldRenderDetachedRecaptcha = Boolean(
+    resolvedRecaptcha &&
+      (resolvedRecaptcha.version === "v2-invisible" ||
+        (resolvedRecaptcha.version === "v2-checkbox" && !recaptchaField)),
+  );
 
   return (
     <form
@@ -757,10 +846,12 @@ const FormRenderer = <T,>({
         </FormRow>
       ))}
       {renderAfterFields}
-      {resolvedRecaptcha && resolvedRecaptcha.version !== "v3" && (
+      {shouldRenderDetachedRecaptcha && resolvedRecaptcha && (
         <div
           ref={recaptchaControl.containerRef}
           data-recaptcha-version={resolvedRecaptcha.version}
+          data-recaptcha-provider={resolvedRecaptcha.provider}
+          data-recaptcha-detached="true"
         />
       )}
       <FieldError

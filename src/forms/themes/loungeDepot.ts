@@ -13,6 +13,8 @@ export const loungeDepotFormTheme: FormTheme = {
   "field.input":
     "w-full bg-doctor font-quicksand text-spicyPink placeholder:text-spicyPink rounded-[28px] border-none px-4 py-3 text-sm leading-[167%] font-normal outline-none sm:px-[26px] sm:py-[14.5px] sm:text-base xl:text-lg",
 
+  "field.recaptcha": "min-h-[78px]",
+
   "field.textarea":
     "w-full bg-doctor font-quicksand text-spicyPink placeholder:text-spicyPink rounded-[28px] border-none px-4 py-3 text-sm leading-[167%] font-normal outline-none min-h-[140px] sm:px-[26px] sm:py-[14.5px] sm:text-base xl:text-lg",
 

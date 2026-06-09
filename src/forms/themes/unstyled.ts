@@ -9,6 +9,7 @@ export const unstyledTheme: FormTheme = {
   "field.label": slot("label"),
   "field.labelHidden": slot("label--hidden"),
   "field.input": slot("input"),
+  "field.recaptcha": slot("recaptcha"),
   "field.textarea": slot("textarea"),
   "field.select": slot("select"),
   "field.checkbox": slot("checkbox"),

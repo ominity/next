@@ -27,7 +27,35 @@ test("deriveFormRecaptchaConfig returns config from recaptcha form field", async
   assert.deepEqual(config, {
     version: "v3",
     siteKey: "public-site-key",
+    provider: "classic",
+    scriptUrl: "https://www.google.com/recaptcha/api.js",
+    clientApiNamespace: "grecaptcha",
     action: "form_submit",
+  });
+});
+
+test("deriveFormRecaptchaConfig supports enterprise score-based payloads", async () => {
+  const fixture = await readFixture("form.fixture.json");
+  fixture.data._embedded.form_fields[2].options = {
+    provider: "enterprise",
+    version: "v3",
+    siteKey: "enterprise-site-key",
+    scriptUrl: "https://www.google.com/recaptcha/enterprise.js",
+    clientApiNamespace: "grecaptcha.enterprise",
+    minimumScore: 0.6,
+    expectedAction: "submit",
+  };
+  const form = normalizeOminityForm(fixture);
+
+  const config = deriveFormRecaptchaConfig(form);
+
+  assert.deepEqual(config, {
+    version: "v3",
+    siteKey: "enterprise-site-key",
+    provider: "enterprise",
+    scriptUrl: "https://www.google.com/recaptcha/enterprise.js",
+    clientApiNamespace: "grecaptcha.enterprise",
+    action: "submit",
   });
 });
 

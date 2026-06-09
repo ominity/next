@@ -5,6 +5,7 @@ type SupportedElements = "label" | "p" | "span";
 
 interface FieldLabelProps {
   field: OminityFormField;
+  id?: string | undefined;
   className: string;
   htmlFor?: string | undefined;
   as?: SupportedElements | undefined;
@@ -13,6 +14,7 @@ interface FieldLabelProps {
 
 const FieldLabel = ({
   field,
+  id,
   className,
   htmlFor,
   as = "label",
@@ -28,6 +30,7 @@ const FieldLabel = ({
   if (as === "label" || htmlFor) {
     return (
       <label
+        id={id}
         htmlFor={htmlFor}
         className={className}
         data-hidden={hiddenAttr}
@@ -40,7 +43,12 @@ const FieldLabel = ({
 
   const Component = as;
   return (
-    <Component className={className} data-hidden={hiddenAttr} data-slot="field.label">
+    <Component
+      id={id}
+      className={className}
+      data-hidden={hiddenAttr}
+      data-slot="field.label"
+    >
       {content}
     </Component>
   );

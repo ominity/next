@@ -22,6 +22,8 @@ export type {
   FormTheme,
   PassthroughClasses,
   RecaptchaConfig,
+  RecaptchaProvider,
+  RecaptchaVersion,
   OminityForm,
   OminityFormField,
   FieldOptionsValue,

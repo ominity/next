@@ -1,4 +1,10 @@
 import type { OminityForm, OminityFormField, RecaptchaConfig } from "../types.js";
+import {
+  getDefaultRecaptchaClientApiNamespace,
+  getDefaultRecaptchaScriptUrl,
+  normalizeRecaptchaProvider,
+  normalizeRecaptchaVersion,
+} from "./runtime.js";
 
 const asRecord = (input: unknown): Record<string, unknown> | null =>
   typeof input === "object" && input !== null && !Array.isArray(input)
@@ -14,21 +20,73 @@ const asNonEmptyString = (input: unknown): string | null => {
   return value.length > 0 ? value : null;
 };
 
-const normalizeRecaptchaVersion = (input: unknown): "v3" | "v2-checkbox" => {
+const getExpectedAction = (options: Record<string, unknown>): string | undefined =>
+  asNonEmptyString(options.expectedAction) ?? asNonEmptyString(options.expected_action) ?? undefined;
+
+const getScriptUrl = (options: Record<string, unknown>): string | null =>
+  asNonEmptyString(options.scriptUrl) ?? asNonEmptyString(options.script_url);
+
+const getClientApiNamespace = (options: Record<string, unknown>): string | null =>
+  asNonEmptyString(options.clientApiNamespace) ??
+  asNonEmptyString(options.client_api_namespace);
+
+const normalizeBadge = (
+  input: unknown,
+): "bottomright" | "bottomleft" | "inline" | undefined => {
   if (typeof input !== "string") {
-    return "v3";
+    return undefined;
   }
 
   const value = input.trim().toLowerCase();
-  if (value === "v2_checkbox" || value === "v2-checkbox") {
-    return "v2-checkbox";
+  if (value === "bottomright" || value === "bottomleft" || value === "inline") {
+    return value;
   }
 
-  return "v3";
+  return undefined;
 };
 
-const getExpectedAction = (options: Record<string, unknown>): string | undefined =>
-  asNonEmptyString(options.expectedAction) ?? asNonEmptyString(options.expected_action) ?? undefined;
+const normalizeTheme = (input: unknown): "light" | "dark" | undefined => {
+  if (typeof input !== "string") {
+    return undefined;
+  }
+
+  const value = input.trim().toLowerCase();
+  if (value === "light" || value === "dark") {
+    return value;
+  }
+
+  return undefined;
+};
+
+const normalizeCheckboxSize = (
+  input: unknown,
+): "compact" | "normal" | undefined => {
+  if (typeof input !== "string") {
+    return undefined;
+  }
+
+  const value = input.trim().toLowerCase();
+  if (value === "compact" || value === "normal") {
+    return value;
+  }
+
+  return undefined;
+};
+
+const normalizeTabIndex = (input: unknown): number | undefined => {
+  if (typeof input === "number" && Number.isFinite(input)) {
+    return Math.trunc(input);
+  }
+
+  if (typeof input === "string" && input.trim().length > 0) {
+    const parsed = Number(input);
+    if (Number.isFinite(parsed)) {
+      return Math.trunc(parsed);
+    }
+  }
+
+  return undefined;
+};
 
 export const deriveFormRecaptchaConfig = (
   form: OminityForm,
@@ -51,18 +109,54 @@ export const deriveFormRecaptchaConfig = (
     return undefined;
   }
 
+  const scriptUrlInput = getScriptUrl(options);
+  const clientApiNamespaceInput = getClientApiNamespace(options);
+  const provider = normalizeRecaptchaProvider(
+    options.provider,
+    clientApiNamespaceInput,
+    scriptUrlInput,
+  );
+  const scriptUrl =
+    scriptUrlInput ?? getDefaultRecaptchaScriptUrl(provider);
+  const clientApiNamespace =
+    clientApiNamespaceInput ??
+    getDefaultRecaptchaClientApiNamespace(provider);
   const version = normalizeRecaptchaVersion(options.version);
+  const badge = normalizeBadge(options.badge);
+  const baseConfig = {
+    siteKey,
+    provider,
+    scriptUrl,
+    clientApiNamespace,
+    ...(badge ? { badge } : {}),
+  };
+
   if (version === "v2-checkbox") {
+    const theme = normalizeTheme(options.theme);
+    const size = normalizeCheckboxSize(options.size);
+    const tabIndex = normalizeTabIndex(options.tabIndex ?? options.tabindex);
+
     return {
       version: "v2-checkbox",
-      siteKey,
+      ...baseConfig,
+      ...(theme ? { theme } : {}),
+      ...(size ? { size } : {}),
+      ...(typeof tabIndex === "number" ? { tabIndex } : {}),
     };
   }
 
   const action = getExpectedAction(options);
+  if (version === "v2-invisible") {
+    return {
+      version: "v2-invisible",
+      ...baseConfig,
+      ...(action ? { action } : {}),
+    };
+  }
+
   return {
     version: "v3",
-    siteKey,
+    ...baseConfig,
     ...(action ? { action } : {}),
   };
 };

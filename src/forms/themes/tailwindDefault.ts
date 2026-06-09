@@ -7,6 +7,7 @@ export const tailwindDefaultTheme: FormTheme = {
   "field.labelHidden": "sr-only",
   "field.input":
     "w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-gray-900 focus:outline-none focus:ring-2 focus:ring-gray-900/30",
+  "field.recaptcha": "min-h-[78px]",
   "field.textarea":
     "min-h-[120px] w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-gray-900 focus:outline-none focus:ring-2 focus:ring-gray-900/30",
   "field.select":

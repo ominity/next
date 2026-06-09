@@ -48,7 +48,7 @@ export function ContactFormClient({ form }: { form: any }) {
 
 This keeps your page/server route SSG/ISR/SSR compatible while isolating form interactivity to a client boundary.
 
-When your form payload includes a `recaptcha` field with options, `FormRenderer` can auto-configure the client-side reCAPTCHA integration from that field (`siteKey`, `version`, `expectedAction`).
+When your form payload includes a `recaptcha` field with options, `FormRenderer` can auto-configure the client-side reCAPTCHA integration from that field (`provider`, `siteKey`, `version`, `scriptUrl`, `clientApiNamespace`, `expectedAction`). Score-based `v3` remains hidden, while `v2_checkbox` renders as a normal field with label/helper/error support.
 
 ## Server submit route
 

@@ -96,6 +96,7 @@ export type ThemeSlot =
   | "field.label"
   | "field.labelHidden"
   | "field.input"
+  | "field.recaptcha"
   | "field.textarea"
   | "field.select"
   | "field.checkbox"
@@ -135,25 +136,31 @@ export interface PhoneFieldValue {
 
 export type MetadataValue = Partial<Record<MetadataFieldOption, string | null>>;
 
+export type RecaptchaProvider = "classic" | "enterprise";
+export type RecaptchaVersion = "v3" | "v2-checkbox" | "v2-invisible";
+
 export interface RecaptchaBaseConfig {
   siteKey: string;
+  provider?: RecaptchaProvider;
+  scriptUrl?: string;
+  clientApiNamespace?: string;
   badge?: "bottomright" | "bottomleft" | "inline";
 }
 
 export interface RecaptchaV3Config extends RecaptchaBaseConfig {
-  version: "v3";
+  version: RecaptchaVersion & "v3";
   action?: string;
 }
 
 export interface RecaptchaV2CheckboxConfig extends RecaptchaBaseConfig {
-  version: "v2-checkbox";
+  version: RecaptchaVersion & "v2-checkbox";
   theme?: "light" | "dark";
   size?: "compact" | "normal";
   tabIndex?: number;
 }
 
 export interface RecaptchaV2InvisibleConfig extends RecaptchaBaseConfig {
-  version: "v2-invisible";
+  version: RecaptchaVersion & "v2-invisible";
   action?: string;
 }
 
