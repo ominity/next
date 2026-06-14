@@ -14,14 +14,25 @@ const FORM_FIELD_TYPES: ReadonlySet<FormFieldType> = new Set([
   "email",
   "phone",
   "textarea",
+  "password",
   "select",
+  "multiselect",
   "checkbox",
   "multicheckbox",
+  "radio",
+  "color",
+  "url",
+  "number",
+  "date",
+  "time",
+  "datetime",
+  "file",
   "hidden",
   "metadata",
   "honeypot",
   "recaptcha",
   "button",
+  "html",
 ]);
 
 function isRecord(input: unknown): input is Record<string, unknown> {
@@ -75,25 +86,6 @@ function asBoolean(input: unknown): boolean | null {
 
 function asArray(input: unknown): ReadonlyArray<unknown> {
   return Array.isArray(input) ? input : [];
-}
-
-function unwrapSingle(input: unknown, keys: ReadonlyArray<string>): unknown {
-  if (!isRecord(input)) {
-    return input;
-  }
-
-  for (const key of keys) {
-    if (key in input) {
-      return input[key];
-    }
-  }
-
-  return input;
-}
-
-function unwrapList(input: unknown, keys: ReadonlyArray<string>): ReadonlyArray<unknown> {
-  const value = unwrapSingle(input, keys);
-  return asArray(value);
 }
 
 function normalizeFieldCss(input: unknown): FieldCss {
@@ -258,47 +250,79 @@ function normalizeEmbeddedFields(
   formId: number,
 ): OminityFormField[] {
   const embedded = isRecord(form._embedded) ? form._embedded : null;
-  const rawFields =
-    (embedded?.form_fields ?? embedded?.fields ?? form.form_fields ?? form.fields);
+  const fieldsSource = embedded?.form_fields;
+  const fields = asArray(fieldsSource);
 
-  return asArray(rawFields).map((entry, index) => normalizeField(entry, index, formId));
+  return fields.map((field, index) => normalizeField(field, index, formId));
 }
 
-export function normalizeOminityForm(input: unknown): OminityForm {
-  const value = unwrapSingle(input, ["form", "data", "item"]);
-
-  if (!isRecord(value)) {
+function resolveFormSource(input: unknown): Record<string, unknown> {
+  if (!isRecord(input)) {
     throw new FormsNormalizationError("Unable to normalize Ominity form", {
-      details: {
-        input,
-      },
+      details: { input },
     });
   }
 
-  const id = asNumber(value.id) ?? 0;
+  const wrappedData = isRecord(input.data) ? input.data : null;
+  if (wrappedData) {
+    return wrappedData;
+  }
+
+  return input;
+}
+
+function resolveFormsSource(input: unknown): ReadonlyArray<unknown> {
+  if (Array.isArray(input)) {
+    return input;
+  }
+
+  if (!isRecord(input)) {
+    return [];
+  }
+
+  if (Array.isArray(input.items)) {
+    return input.items;
+  }
+
+  if (Array.isArray(input.data)) {
+    return input.data;
+  }
+
+  const embedded = isRecord(input._embedded) ? input._embedded : null;
+  if (embedded && Array.isArray(embedded.forms)) {
+    return embedded.forms;
+  }
+
+  return [];
+}
+
+export function normalizeOminityForm(input: unknown): OminityForm {
+  const source = resolveFormSource(input);
+
+  const id = asNumber(source.id) ?? 0;
 
   return {
     resource: "form",
     id,
-    name: asString(value.name) ?? `form_${id}`,
-    title: asString(value.title) ?? "",
-    description: asString(value.description) ?? "",
-    submissions: asNumber(value.submissions) ?? 0,
-    publishedAt: asString(value.publishedAt),
-    updatedAt: asString(value.updatedAt) ?? "",
-    createdAt: asString(value.createdAt) ?? "",
+    name: asString(source.name) ?? "",
+    title: asString(source.title) ?? "",
+    description: asString(source.description) ?? "",
+    submissions: asNumber(source.submissions) ?? 0,
+    publishedAt: asString(source.publishedAt),
+    updatedAt: asString(source.updatedAt) ?? "",
+    createdAt: asString(source.createdAt) ?? "",
     _embedded: {
-      form_fields: normalizeEmbeddedFields(value, id),
+      form_fields: normalizeEmbeddedFields(source, id),
     },
   };
 }
 
-export function normalizeOminityForms(input: unknown): ReadonlyArray<OminityForm> {
-  return unwrapList(input, ["forms", "data", "items"]).map((entry) =>
-    normalizeOminityForm(entry));
+export function normalizeOminityForms(input: unknown): OminityForm[] {
+  const forms = resolveFormsSource(input);
+  return forms.map((form) => normalizeOminityForm(form));
 }
 
 export const defaultFormsNormalizers = {
   form: normalizeOminityForm,
   forms: normalizeOminityForms,
-} as const;
+};

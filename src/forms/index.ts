@@ -11,26 +11,48 @@ export {
   FormsNormalizationError,
 } from "./errors.js";
 export { createFormsDebugLogger } from "./debug.js";
-export { createShadcnFormComponents } from "./shadcn.js";
-export { default as PhoneInput } from "./phone/PhoneInput.js";
+export { createShadcnFormAdapters } from "./shadcn.js";
 export {
   deriveFormRecaptchaConfig,
   resolveFormRecaptchaConfig,
 } from "./recaptcha/config.js";
 export type {
+  FileFieldValue,
+  FormAdapters,
+  FormButtonAdapterProps,
+  FormCheckboxAdapterProps,
+  FormFieldContentAdapterProps,
+  FormFieldDescriptionAdapterProps,
+  FormFieldErrorAdapterProps,
+  FormFieldGroupAdapterProps,
+  FormFieldLabelAdapterProps,
+  FormFieldLegendAdapterProps,
+  FormFieldRootAdapterProps,
+  FormFieldSetAdapterProps,
+  FormFileInputAdapterProps,
+  FormHtmlBlockAdapterProps,
+  FormInputAdapterProps,
+  FormMultiSelectAdapterProps,
+  FormPhoneInputAdapterProps,
+  FormRadioGroupAdapterProps,
+  FormRadioItemAdapterProps,
   FormRendererProps,
+  FormSelectAdapterProps,
+  FormTextareaAdapterProps,
   FormTheme,
-  PassthroughClasses,
-  RecaptchaConfig,
-  RecaptchaProvider,
-  RecaptchaVersion,
+  MetadataValue,
   OminityForm,
   OminityFormField,
   FieldOptionsValue,
   PhoneFieldValue,
   PhoneCountry,
-  MetadataValue,
-  FormComponents,
+  PassthroughClasses,
+  PendingFileUploadRequest,
+  PendingFileUploadResponse,
+  RecaptchaConfig,
+  RecaptchaProvider,
+  RecaptchaVersion,
+  SubmitResult,
   InlineBreakpoint,
 } from "./types.js";
 export type {
@@ -49,7 +71,7 @@ export type {
   FormsClientLogEvent,
   FormsClientLogger,
 } from "./debug.js";
-export type { ShadcnFormComponentsInput } from "./shadcn.js";
+export type { ShadcnFormAdaptersInput } from "./shadcn.js";
 export { tailwindDefaultTheme } from "./themes/tailwindDefault.js";
 export { unstyledTheme } from "./themes/unstyled.js";
 export { loungeDepotFormTheme } from "./themes/loungeDepot.js";

@@ -1,5 +1,6 @@
 import {
   type FieldOption,
+  type FileFieldValue,
   type MetadataValue,
   type OminityFormField,
   type PhoneFieldValue,
@@ -66,6 +67,33 @@ const parseBoolean = (value: unknown): boolean => {
   return false;
 };
 
+const parseMultipleValues = (value: string | null | undefined): string[] => {
+  if (!value) {
+    return [];
+  }
+
+  return value
+    .split(",")
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+};
+
+const getDefaultOptionValues = (field: OminityFormField): string[] =>
+  getFieldOptions(field)
+    .filter((option) => option.isDefault)
+    .map((option) => option.value);
+
+const getDefaultSelectValue = (field: OminityFormField): string => {
+  if (field.defaultValue) {
+    return field.defaultValue;
+  }
+
+  const defaultOption =
+    getFieldOptions(field).find((option) => option.isDefault) ?? null;
+
+  return defaultOption?.value ?? "";
+};
+
 export const getDefaultValue = (
   field: OminityFormField,
   metadata: Record<string, MetadataValue>,
@@ -81,24 +109,23 @@ export const getDefaultValue = (
     case "honeypot":
       return "";
     case "hidden":
+    case "html":
       return field.defaultValue ?? "";
     case "checkbox":
       return parseBoolean(field.defaultValue);
+    case "multiselect": {
+      const defaults = parseMultipleValues(field.defaultValue);
+      return defaults.length > 0 ? defaults : getDefaultOptionValues(field);
+    }
     case "multicheckbox": {
-      const defaults = getFieldOptions(field)
-        .filter((option) => option.isDefault)
-        .map((option) => option.value);
-      return defaults;
+      const defaults = getDefaultOptionValues(field);
+      return defaults.length > 0 ? defaults : parseMultipleValues(field.defaultValue);
     }
-    case "select": {
-      if (field.defaultValue) {
-        return field.defaultValue;
-      }
-      const defaultOption =
-        getFieldOptions(field).find((option) => option.isDefault) ?? null;
-      return defaultOption?.value ?? "";
-    }
+    case "select":
+    case "radio":
+      return getDefaultSelectValue(field);
     case "phone":
+    case "file":
       return null;
     default:
       return field.defaultValue ?? "";
@@ -115,6 +142,31 @@ export const buildDefaultValues = (
     defaults[field.name] = getDefaultValue(field, metadata, initialValues);
   });
   return defaults;
+};
+
+const normalizeFileValue = (rawValue: unknown): FileFieldValue | null => {
+  if (!rawValue || typeof rawValue !== "object") {
+    return null;
+  }
+
+  const record = rawValue as Record<string, unknown>;
+  const key = typeof record.key === "string" ? record.key : "";
+  const url = typeof record.url === "string" ? record.url : "";
+  const filename = typeof record.filename === "string" ? record.filename : "";
+  const mimeType = typeof record.mimeType === "string" ? record.mimeType : "";
+  const size = typeof record.size === "number" ? record.size : Number(record.size ?? 0);
+
+  if (!filename) {
+    return null;
+  }
+
+  return {
+    key,
+    url,
+    filename,
+    mimeType,
+    size: Number.isFinite(size) ? size : 0,
+  };
 };
 
 export const normalizeSubmissionData = (
@@ -143,11 +195,15 @@ export const normalizeSubmissionData = (
       case "checkbox":
         data[field.name] = Boolean(rawValue);
         break;
+      case "multiselect":
       case "multicheckbox":
         data[field.name] = Array.isArray(rawValue) ? rawValue : [];
         break;
       case "metadata":
         data[field.name] = rawValue || {};
+        break;
+      case "file":
+        data[field.name] = normalizeFileValue(rawValue);
         break;
       default:
         data[field.name] =
