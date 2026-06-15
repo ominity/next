@@ -4,6 +4,7 @@ import type {
   SubmissionPayload,
 } from "../types.js";
 import { normalizeMetadataLocale } from "../utils/metadata.js";
+import { resolveRequestClientIp } from "../../server/client-ip.js";
 
 const DEFAULT_BASE_URL = "https://demo.ominity.com/api";
 const DEFAULT_RECAPTCHA_VERIFY_URL =
@@ -38,92 +39,6 @@ const isForwardSubmissionResult = (input: unknown): input is ForwardSubmissionRe
   return "status" in input && typeof (input as { status?: unknown }).status === "number";
 };
 
-function normalizeIpCandidate(value: string): string | null {
-  let normalized = value.trim();
-  if (!normalized) {
-    return null;
-  }
-
-  if (normalized.startsWith("\"") && normalized.endsWith("\"")) {
-    normalized = normalized.slice(1, -1).trim();
-  }
-
-  if (normalized.startsWith("for=")) {
-    normalized = normalized.slice(4).trim();
-  }
-
-  if (normalized.startsWith("[") && normalized.includes("]")) {
-    const closingBracketIndex = normalized.indexOf("]");
-    normalized = normalized.slice(1, closingBracketIndex).trim();
-  } else {
-    const colonCount = (normalized.match(/:/g) ?? []).length;
-    if (colonCount === 1 && normalized.includes(".")) {
-      const [host] = normalized.split(":");
-      normalized = host?.trim() ?? normalized;
-    }
-  }
-
-  normalized = normalized.replace(/^::ffff:/i, "").trim();
-
-  if (!normalized || normalized.toLowerCase() === "unknown") {
-    return null;
-  }
-
-  return normalized;
-}
-
-function readHeaderCandidates(request: Request, headerName: string): string[] {
-  const value = request.headers.get(headerName);
-  if (!value) {
-    return [];
-  }
-
-  if (headerName === "forwarded") {
-    return value
-      .split(",")
-      .flatMap((entry) => entry.split(";"))
-      .map((entry) => entry.trim())
-      .filter((entry) => entry.toLowerCase().startsWith("for="))
-      .map((entry) => normalizeIpCandidate(entry))
-      .filter((entry): entry is string => Boolean(entry));
-  }
-
-  if (headerName === "x-forwarded-for") {
-    return value
-      .split(",")
-      .map((entry) => normalizeIpCandidate(entry))
-      .filter((entry): entry is string => Boolean(entry));
-  }
-
-  const normalized = normalizeIpCandidate(value);
-  return normalized ? [normalized] : [];
-}
-
-const getClientIp = (request: Request): string | null => {
-  const headerNames = [
-    "x-ominity-client-ip",
-    "cf-connecting-ip",
-    "true-client-ip",
-    "fastly-client-ip",
-    "fly-client-ip",
-    "x-vercel-forwarded-for",
-    "x-client-ip",
-    "x-nf-client-connection-ip",
-    "x-real-ip",
-    "forwarded",
-    "x-forwarded-for",
-  ];
-
-  for (const headerName of headerNames) {
-    const candidates = readHeaderCandidates(request, headerName);
-    if (candidates.length > 0) {
-      return candidates[0] ?? null;
-    }
-  }
-
-  return null;
-};
-
 const buildServerMetadata = (
   request: Request,
   overrides?: MetadataValue | null | undefined,
@@ -140,7 +55,7 @@ const buildServerMetadata = (
     referrer: overrides?.referrer ?? referrer ?? null,
     user_agent: overrides?.user_agent ?? userAgent ?? null,
     locale: normalizeMetadataLocale(overrides?.locale ?? locale ?? null),
-    ip_address: overrides?.ip_address ?? getClientIp(request),
+    ip_address: overrides?.ip_address ?? resolveRequestClientIp(request),
   };
 };
 

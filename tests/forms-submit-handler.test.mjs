@@ -204,3 +204,52 @@ test("createOminityFormSubmitHandler prefers explicit proxy client IP headers ov
   assert.equal(response.status, 201);
   assert.equal(forwardedPayload.data.metadata.ip_address, "198.51.100.24");
 });
+
+test("createOminityFormSubmitHandler prefers a public forwarded IP over a loopback real IP", async () => {
+  let forwardedPayload = null;
+
+  const fetchImpl = async (input, init) => {
+    if (String(input).includes("/v1/modules/forms/submissions")) {
+      forwardedPayload = JSON.parse(init.body);
+
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 201,
+        headers: {
+          "Content-Type": "application/json",
+        },
+      });
+    }
+
+    return new Response("{}", { status: 404 });
+  };
+
+  const handler = createOminityFormSubmitHandler({
+    ominityApiKey: "secret",
+    ominityBaseUrl: "https://example.ominity.test/api",
+    fetchImpl,
+  });
+
+  const response = await handler(new Request("https://example.com/api/forms/submit", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Real-IP": "::1",
+      "X-Forwarded-For": "94.110.206.244",
+    },
+    body: JSON.stringify({
+      formId: 101,
+      userId: null,
+      recaptchaToken: null,
+      data: {
+        recaptcha: {
+          token: "token-value",
+        },
+        metadata: {},
+      },
+    }),
+  }));
+
+  assert.equal(response.status, 201);
+  assert.equal(forwardedPayload.data.metadata.ip_address, "94.110.206.244");
+  assert.equal(forwardedPayload.data.recaptcha.ip_address, "94.110.206.244");
+});

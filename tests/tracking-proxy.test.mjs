@@ -189,3 +189,43 @@ test("createOminityTrackingProxyHandler resolves RFC 7239 Forwarded header value
   assert.equal(forwardedHeaders.get("x-ominity-client-ip"), "203.0.113.77");
   assert.equal(forwardedHeaders.get("x-forwarded-for"), "203.0.113.77");
 });
+
+test("createOminityTrackingProxyHandler prefers a public forwarded IP over a loopback real IP", async () => {
+  let forwardedHeaders = null;
+
+  const fetchImpl = async (_input, init) => {
+    forwardedHeaders = new Headers(init.headers);
+
+    return new Response(JSON.stringify({
+      success: true,
+    }), {
+      status: 200,
+      headers: {
+        "Content-Type": "application/json",
+      },
+    });
+  };
+
+  const handler = createOminityTrackingProxyHandler({
+    ominityApiKey: "secret",
+    ominityBaseUrl: "https://example.ominity.test/api",
+    fetchImpl,
+  });
+
+  const response = await handler(new Request("https://shop.example.com/api/omt", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Real-IP": "::1",
+      "X-Forwarded-For": "94.110.206.244",
+    },
+    body: JSON.stringify({
+      event: "page_view",
+    }),
+  }));
+
+  assert.equal(response.status, 200);
+  assert.equal(forwardedHeaders.get("x-real-ip"), "94.110.206.244");
+  assert.equal(forwardedHeaders.get("x-ominity-client-ip"), "94.110.206.244");
+  assert.equal(forwardedHeaders.get("x-forwarded-for"), "94.110.206.244");
+});

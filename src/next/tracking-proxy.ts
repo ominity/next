@@ -1,4 +1,8 @@
 import type { TrackEventRequest } from "./tracking-types.js";
+import {
+  resolveRequestClientIp,
+  resolveRequestForwardedFor,
+} from "../server/client-ip.js";
 
 const DEFAULT_OMINITY_BASE_URL = "https://demo.ominity.com/api";
 
@@ -46,101 +50,6 @@ const isForwardTrackingResult = (input: unknown): input is ForwardTrackingResult
 
   return "status" in input && typeof (input as { status?: unknown }).status === "number";
 };
-
-function normalizeIpCandidate(value: string): string | null {
-  let normalized = value.trim();
-  if (!normalized) {
-    return null;
-  }
-
-  if (normalized.startsWith("\"") && normalized.endsWith("\"")) {
-    normalized = normalized.slice(1, -1).trim();
-  }
-
-  if (normalized.startsWith("for=")) {
-    normalized = normalized.slice(4).trim();
-  }
-
-  if (normalized.startsWith("[") && normalized.includes("]")) {
-    const closingBracketIndex = normalized.indexOf("]");
-    normalized = normalized.slice(1, closingBracketIndex).trim();
-  } else {
-    const colonCount = (normalized.match(/:/g) ?? []).length;
-    if (colonCount === 1 && normalized.includes(".")) {
-      const [host] = normalized.split(":");
-      normalized = host?.trim() ?? normalized;
-    }
-  }
-
-  normalized = normalized.replace(/^::ffff:/i, "").trim();
-
-  if (!normalized || normalized.toLowerCase() === "unknown") {
-    return null;
-  }
-
-  return normalized;
-}
-
-function readHeaderCandidates(request: Request, headerName: string): string[] {
-  const value = request.headers.get(headerName);
-  if (!value) {
-    return [];
-  }
-
-  if (headerName === "forwarded") {
-    return value
-      .split(",")
-      .flatMap((entry) => entry.split(";"))
-      .map((entry) => entry.trim())
-      .filter((entry) => entry.toLowerCase().startsWith("for="))
-      .map((entry) => normalizeIpCandidate(entry))
-      .filter((entry): entry is string => Boolean(entry));
-  }
-
-  if (headerName === "x-forwarded-for") {
-    return value
-      .split(",")
-      .map((entry) => normalizeIpCandidate(entry))
-      .filter((entry): entry is string => Boolean(entry));
-  }
-
-  const normalized = normalizeIpCandidate(value);
-  return normalized ? [normalized] : [];
-}
-
-function getClientIpCandidates(request: Request): string[] {
-  const headerNames = [
-    "x-ominity-client-ip",
-    "cf-connecting-ip",
-    "true-client-ip",
-    "fastly-client-ip",
-    "fly-client-ip",
-    "x-vercel-forwarded-for",
-    "x-client-ip",
-    "x-nf-client-connection-ip",
-    "x-real-ip",
-    "forwarded",
-    "x-forwarded-for",
-  ];
-
-  return headerNames.flatMap((headerName) => readHeaderCandidates(request, headerName));
-}
-
-function getClientIp(request: Request): string | null {
-  const candidates = getClientIpCandidates(request);
-  return candidates[0] ?? null;
-}
-
-function getForwardedForChain(request: Request, clientIp: string | null): string | null {
-  const forwarded = readHeaderCandidates(request, "x-forwarded-for");
-  const values = clientIp ? [clientIp, ...forwarded] : forwarded;
-  const unique = values.filter((value, index) => values.indexOf(value) === index);
-  if (unique.length > 0) {
-    return unique.join(", ");
-  }
-
-  return clientIp;
-}
 
 function asRecord(value: unknown): Record<string, unknown> {
   if (typeof value === "object" && value !== null) {
@@ -301,8 +210,8 @@ export function createOminityTrackingProxyHandler(
         headers.set("User-Agent", userAgent);
       }
 
-      const clientIp = getClientIp(request);
-      const forwardedFor = getForwardedForChain(request, clientIp);
+      const clientIp = resolveRequestClientIp(request);
+      const forwardedFor = resolveRequestForwardedFor(request);
       if (forwardedFor) {
         headers.set("X-Forwarded-For", forwardedFor);
       }
