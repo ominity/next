@@ -17,11 +17,20 @@ export {
   deriveFormRecaptchaConfig,
   resolveFormRecaptchaConfig,
 } from "./recaptcha/config.js";
+export {
+  formatFormMessage,
+  resolveDefaultFormMessages,
+  resolveFormMessages,
+} from "./messages.js";
 export type {
   FileFieldValue,
   FormAdapters,
+  FormAccessibilityMessages,
   FormButtonAdapterProps,
   FormCheckboxAdapterProps,
+  FormMessageOverrides,
+  FormMessages,
+  FormMessageTemplateParams,
   FormFieldContentAdapterProps,
   FormFieldDescriptionAdapterProps,
   FormFieldErrorAdapterProps,
@@ -39,8 +48,10 @@ export type {
   FormRadioItemAdapterProps,
   FormRendererProps,
   FormSelectAdapterProps,
+  FormStatusMessages,
   FormTextareaAdapterProps,
   FormTheme,
+  FormValidationMessages,
   MetadataValue,
   OminityForm,
   OminityFormField,

@@ -61,6 +61,7 @@ import {
   resolveFormRecaptchaConfig,
 } from "./recaptcha/config.js";
 import type { SubmitResult, SubmissionPayload } from "./types.js";
+import { formatFormMessage, resolveFormMessages } from "./messages.js";
 import { resolveGridColumns } from "./utils/layout.js";
 import FormRow from "./components/FormRow.js";
 import PhoneInput, { type PhoneInputProps } from "./phone/PhoneInput.js";
@@ -156,35 +157,113 @@ const resolveInlineBreakpoint = (
 const getFieldId = (field: OminityFormField): string =>
   field.css?.id || `ominity-field-${field.id}`;
 
+const normalizeRuleName = (value: string): string =>
+  value.trim().toLowerCase().replaceAll(/[\s_-]+/g, "");
+
+const resolveFieldLabel = (field: OminityFormField): string =>
+  field.label || field.name;
+
+const findValidationRuleMessage = (
+  field: OminityFormField,
+  candidates: ReadonlyArray<string>,
+): string | null => {
+  if (!field.validation?.rules?.length) {
+    return null;
+  }
+
+  const normalizedCandidates = new Set(candidates.map((candidate) => normalizeRuleName(candidate)));
+  const matchedRule = field.validation.rules.find((rule) => {
+    return normalizedCandidates.has(normalizeRuleName(rule.rule));
+  });
+
+  return typeof matchedRule?.message === "string" && matchedRule.message.length > 0
+    ? matchedRule.message
+    : null;
+};
+
+const resolveValidationMessage = (
+  field: OminityFormField,
+  fallback: string,
+  options: {
+    readonly params?: {
+      field?: string;
+      min?: number;
+      max?: number;
+    };
+    readonly ruleNames?: ReadonlyArray<string>;
+  } = {},
+): string => {
+  const fromRule = options.ruleNames
+    ? findValidationRuleMessage(field, options.ruleNames)
+    : null;
+  if (fromRule) {
+    return fromRule;
+  }
+
+  if (typeof field.validation?.message === "string" && field.validation.message.length > 0) {
+    return field.validation.message;
+  }
+
+  return formatFormMessage(fallback, {
+    field: resolveFieldLabel(field),
+    ...options.params,
+  });
+};
+
 const getRegisterRules = (
   field: OminityFormField,
+  messages: ReturnType<typeof resolveFormMessages>,
 ): RegisterOptions<FormValues> => {
-  const message =
-    field.validation?.message || `${field.label || field.name} is invalid`;
   const rules: RegisterOptions<FormValues> = {};
 
   if (field.validation?.isRequired) {
-    rules.required = message;
+    rules.required = resolveValidationMessage(
+      field,
+      messages.validation.required,
+      { ruleNames: ["required", "isRequired"] },
+    );
   }
 
   if (typeof field.validation?.minLength === "number") {
     rules.minLength = {
       value: field.validation.minLength,
-      message: message || `Minimum ${field.validation.minLength} characters`,
+      message: resolveValidationMessage(
+        field,
+        messages.validation.minLength,
+        {
+          params: {
+            min: field.validation.minLength,
+          },
+          ruleNames: ["minLength", "min_length", "min"],
+        },
+      ),
     };
   }
 
   if (typeof field.validation?.maxLength === "number") {
     rules.maxLength = {
       value: field.validation.maxLength,
-      message: message || `Maximum ${field.validation.maxLength} characters`,
+      message: resolveValidationMessage(
+        field,
+        messages.validation.maxLength,
+        {
+          params: {
+            max: field.validation.maxLength,
+          },
+          ruleNames: ["maxLength", "max_length", "max"],
+        },
+      ),
     };
   }
 
   if (field.type === "email") {
     rules.pattern = {
       value: EMAIL_PATTERN,
-      message: "Enter a valid email address.",
+      message: resolveValidationMessage(
+        field,
+        messages.validation.email,
+        { ruleNames: ["email", "pattern"] },
+      ),
     };
   }
 
@@ -202,6 +281,7 @@ const resolveTheme = (
 const getErrorMessage = (
   errors: FieldErrors<FormValues>,
   field: OminityFormField,
+  messages: ReturnType<typeof resolveFormMessages>,
 ): string | null => {
   const error = errors[field.name];
   if (!error) {
@@ -210,7 +290,11 @@ const getErrorMessage = (
   if (typeof error.message === "string") {
     return error.message;
   }
-  return field.validation?.message || "Invalid value.";
+  return resolveValidationMessage(
+    field,
+    messages.validation.invalid,
+    { ruleNames: ["invalid"] },
+  );
 };
 
 type InlineFieldRow = {
@@ -495,7 +579,10 @@ const getTextInputType = (field: OminityFormField): string => {
   }
 };
 
-const getSelectValidation = (field: OminityFormField) => {
+const getSelectValidation = (
+  field: OminityFormField,
+  messages: ReturnType<typeof resolveFormMessages>,
+) => {
   if (!field.validation?.isRequired) {
     return undefined;
   }
@@ -505,11 +592,18 @@ const getSelectValidation = (field: OminityFormField) => {
       return true;
     }
 
-    return field.validation?.message || `${field.label || field.name} is required.`;
+    return resolveValidationMessage(
+      field,
+      messages.validation.required,
+      { ruleNames: ["required", "isRequired"] },
+    );
   };
 };
 
-const getMultiValueValidation = (field: OminityFormField) => {
+const getMultiValueValidation = (
+  field: OminityFormField,
+  messages: ReturnType<typeof resolveFormMessages>,
+) => {
   if (!field.validation?.isRequired) {
     return undefined;
   }
@@ -519,11 +613,18 @@ const getMultiValueValidation = (field: OminityFormField) => {
       return true;
     }
 
-    return field.validation?.message || `${field.label || field.name} is required.`;
+    return resolveValidationMessage(
+      field,
+      messages.validation.required,
+      { ruleNames: ["required", "isRequired"] },
+    );
   };
 };
 
-const getCheckboxValidation = (field: OminityFormField) => {
+const getCheckboxValidation = (
+  field: OminityFormField,
+  messages: ReturnType<typeof resolveFormMessages>,
+) => {
   if (!field.validation?.isRequired) {
     return undefined;
   }
@@ -533,11 +634,18 @@ const getCheckboxValidation = (field: OminityFormField) => {
       return true;
     }
 
-    return field.validation?.message || `${field.label || field.name} is required.`;
+    return resolveValidationMessage(
+      field,
+      messages.validation.required,
+      { ruleNames: ["required", "isRequired"] },
+    );
   };
 };
 
-const getPhoneValidation = (field: OminityFormField) => {
+const getPhoneValidation = (
+  field: OminityFormField,
+  messages: ReturnType<typeof resolveFormMessages>,
+) => {
   return (rawValue: unknown) => {
     const phoneValue = rawValue as PhoneFieldValue | null;
     if (!field.validation?.isRequired && !phoneValue?.nationalNumber) {
@@ -546,11 +654,18 @@ const getPhoneValidation = (field: OminityFormField) => {
     if (phoneValue?.e164) {
       return true;
     }
-    return field.validation?.message || "Enter a valid phone number.";
+    return resolveValidationMessage(
+      field,
+      messages.validation.phone,
+      { ruleNames: ["phone", "tel"] },
+    );
   };
 };
 
-const getFileValidation = (field: OminityFormField) => {
+const getFileValidation = (
+  field: OminityFormField,
+  messages: ReturnType<typeof resolveFormMessages>,
+) => {
   return (rawValue: unknown) => {
     const fileValue = rawValue as FileFieldValue | null;
     if (!field.validation?.isRequired && !fileValue?.filename) {
@@ -559,7 +674,11 @@ const getFileValidation = (field: OminityFormField) => {
     if (fileValue?.filename && (fileValue.key || fileValue.url)) {
       return true;
     }
-    return field.validation?.message || `${field.label || field.name} is required.`;
+    return resolveValidationMessage(
+      field,
+      messages.validation.required,
+      { ruleNames: ["required", "isRequired", "file"] },
+    );
   };
 };
 
@@ -631,8 +750,13 @@ const FormRenderer = <T,>({
   components,
   inlineBreakpoint = "md",
   fileUploadUrl,
+  messages,
 }: FormRendererProps<T>) => {
   const resolvedAdapters = adapters ?? components;
+  const resolvedMessages = useMemo(
+    () => resolveFormMessages(locale, messages),
+    [locale, messages],
+  );
 
   const allFields = useMemo(() => {
     const incoming = form?._embedded?.form_fields ?? [];
@@ -858,7 +982,7 @@ const FormRenderer = <T,>({
   const getRecaptchaFailureMessage = (): string =>
     recaptchaControl.error ??
     recaptchaField?.validation?.message ??
-    "Complete the security check.";
+    resolvedMessages.validation.recaptcha;
 
   const FieldComponent = resolvedAdapters?.Field ?? DefaultField;
   const FieldContentComponent = resolvedAdapters?.FieldContent ?? DefaultFieldContent;
@@ -885,7 +1009,7 @@ const FormRenderer = <T,>({
     try {
       await onSubmitValid?.(values);
     } catch (error) {
-      setSubmissionError("Unable to process form.");
+      setSubmissionError(resolvedMessages.status.processError);
       onSubmitError?.({
         ok: false,
         status: 0,
@@ -906,13 +1030,13 @@ const FormRenderer = <T,>({
       return typeof honeypotValue === "string" && honeypotValue.trim();
     });
     if (honeypotTriggered) {
-      setSubmissionError("Submission blocked.");
+      setSubmissionError(resolvedMessages.status.submissionBlocked);
       setIsSubmitting(false);
       return;
     }
 
     if (hasRecaptchaProtection && !resolvedRecaptcha) {
-      setSubmissionError("Security check is unavailable.");
+      setSubmissionError(resolvedMessages.status.securityUnavailable);
       setIsSubmitting(false);
       return;
     }
@@ -969,7 +1093,10 @@ const FormRenderer = <T,>({
       };
 
       if (!response.ok) {
-        setSubmissionError("Something went wrong. Please try again.");
+        const responseError = typeof responseBody.error === "string" && responseBody.error.trim().length > 0
+          ? responseBody.error
+          : resolvedMessages.status.submitFailed;
+        setSubmissionError(responseError);
         onSubmitError?.(result as SubmitResult<never>);
         return;
       }
@@ -977,7 +1104,7 @@ const FormRenderer = <T,>({
       reset(buildDefaultValues(statefulFields, metadataValues, initialValues));
       onSubmitSuccess?.(result);
     } catch (error) {
-      setSubmissionError("Unable to submit form.");
+      setSubmissionError(resolvedMessages.status.submitUnavailable);
       onSubmitError?.({
         ok: false,
         status: 0,
@@ -996,7 +1123,7 @@ const FormRenderer = <T,>({
   ) => {
     const inputId = getFieldId(field);
     const helperId = field.helper ? `${inputId}-helper` : undefined;
-    const errorMessage = getErrorMessage(errors, field);
+    const errorMessage = getErrorMessage(errors, field, resolvedMessages);
     const errorId = errorMessage ? `${inputId}-error` : undefined;
     const labelId = field.label ? `${inputId}-label` : undefined;
 
@@ -1047,7 +1174,7 @@ const FormRenderer = <T,>({
     if (field.type === "honeypot") {
       return (
         <div key={field.id} style={{ display: "none" }} aria-hidden="true">
-          <label htmlFor={inputId}>{field.label || "Leave this field empty"}</label>
+          <label htmlFor={inputId}>{field.label || resolvedMessages.accessibility.honeypotLabel}</label>
           <input
             id={inputId}
             type="text"
@@ -1102,7 +1229,7 @@ const FormRenderer = <T,>({
               aria-invalid={errorMessage ? true : undefined}
               invalid={Boolean(errorMessage)}
               disabled={submitDisabled || isSubmitting}
-              {...register(field.name, getRegisterRules(field))}
+              {...register(field.name, getRegisterRules(field, resolvedMessages))}
             />
             {renderFieldDescription(
               FieldDescriptionComponent,
@@ -1143,7 +1270,7 @@ const FormRenderer = <T,>({
               aria-invalid={errorMessage ? true : undefined}
               invalid={Boolean(errorMessage)}
               disabled={submitDisabled || isSubmitting}
-              {...register(field.name, getRegisterRules(field))}
+              {...register(field.name, getRegisterRules(field, resolvedMessages))}
             />
             {renderFieldDescription(
               FieldDescriptionComponent,
@@ -1168,7 +1295,7 @@ const FormRenderer = <T,>({
           key={field.id}
           control={control}
           name={field.name}
-          rules={getControllerRules(getSelectValidation(field))}
+          rules={getControllerRules(getSelectValidation(field, resolvedMessages))}
           render={({ field: controllerField }) => (
             <FieldComponent {...fieldRootProps}>
               {field.label ? (
@@ -1218,7 +1345,7 @@ const FormRenderer = <T,>({
           key={field.id}
           control={control}
           name={field.name}
-          rules={getControllerRules(getMultiValueValidation(field))}
+          rules={getControllerRules(getMultiValueValidation(field, resolvedMessages))}
           render={({ field: controllerField }) => (
             <FieldComponent {...fieldRootProps}>
               {field.label ? (
@@ -1268,7 +1395,7 @@ const FormRenderer = <T,>({
           key={field.id}
           control={control}
           name={field.name}
-          rules={getControllerRules(getCheckboxValidation(field))}
+          rules={getControllerRules(getCheckboxValidation(field, resolvedMessages))}
           render={({ field: controllerField }) => (
             <FieldComponent
               {...fieldRootProps}
@@ -1319,7 +1446,7 @@ const FormRenderer = <T,>({
           key={field.id}
           control={control}
           name={field.name}
-          rules={getControllerRules(getMultiValueValidation(field))}
+          rules={getControllerRules(getMultiValueValidation(field, resolvedMessages))}
           render={({ field: controllerField }) => {
             const selectedValues = Array.isArray(controllerField.value)
               ? (controllerField.value as string[])
@@ -1397,7 +1524,7 @@ const FormRenderer = <T,>({
           key={field.id}
           control={control}
           name={field.name}
-          rules={getControllerRules(getSelectValidation(field))}
+          rules={getControllerRules(getSelectValidation(field, resolvedMessages))}
           render={({ field: controllerField }) => {
             const options = getFieldOptions(field);
             const RadioGroupComponent = resolvedAdapters?.RadioGroup;
@@ -1480,7 +1607,7 @@ const FormRenderer = <T,>({
           key={field.id}
           control={control}
           name={field.name}
-          rules={getControllerRules(getPhoneValidation(field))}
+          rules={getControllerRules(getPhoneValidation(field, resolvedMessages))}
           render={({ field: controllerField }) => (
             <FieldComponent {...fieldRootProps}>
               {field.label ? (
@@ -1541,7 +1668,7 @@ const FormRenderer = <T,>({
           key={field.id}
           control={control}
           name={field.name}
-          rules={getControllerRules(getFileValidation(field))}
+          rules={getControllerRules(getFileValidation(field, resolvedMessages))}
           render={({ field: controllerField }) => (
             <FieldComponent {...fieldRootProps}>
               {field.label ? (

@@ -449,6 +449,46 @@ export type FormComponents = FormAdapters;
 
 export type InlineBreakpoint = number | "sm" | "md" | "lg" | "xl" | "2xl";
 
+export interface FormMessageTemplateParams {
+  field?: string;
+  min?: number;
+  max?: number;
+}
+
+export interface FormValidationMessages {
+  invalid: string;
+  required: string;
+  minLength: string;
+  maxLength: string;
+  email: string;
+  phone: string;
+  recaptcha: string;
+}
+
+export interface FormStatusMessages {
+  processError: string;
+  submissionBlocked: string;
+  securityUnavailable: string;
+  submitFailed: string;
+  submitUnavailable: string;
+}
+
+export interface FormAccessibilityMessages {
+  honeypotLabel: string;
+}
+
+export interface FormMessages {
+  validation: FormValidationMessages;
+  status: FormStatusMessages;
+  accessibility: FormAccessibilityMessages;
+}
+
+export interface FormMessageOverrides {
+  validation?: Partial<FormValidationMessages>;
+  status?: Partial<FormStatusMessages>;
+  accessibility?: Partial<FormAccessibilityMessages>;
+}
+
 export interface FormRendererProps<T = unknown> {
   form: OminityForm;
   submitUrl?: string;
@@ -473,6 +513,7 @@ export interface FormRendererProps<T = unknown> {
   components?: FormAdapters;
   inlineBreakpoint?: InlineBreakpoint;
   fileUploadUrl?: string;
+  messages?: FormMessageOverrides;
 }
 
 export interface CreateSubmitHandlerConfig {
