@@ -3,6 +3,7 @@ import type {
   MetadataValue,
   SubmissionPayload,
 } from "../types.js";
+import { normalizeMetadataLocale } from "../utils/metadata.js";
 
 const DEFAULT_BASE_URL = "https://demo.ominity.com/api";
 const DEFAULT_RECAPTCHA_VERIFY_URL =
@@ -37,26 +38,86 @@ const isForwardSubmissionResult = (input: unknown): input is ForwardSubmissionRe
   return "status" in input && typeof (input as { status?: unknown }).status === "number";
 };
 
-const getClientIp = (request: Request): string | null => {
-  const forwarded = request.headers.get("x-forwarded-for");
-  if (forwarded) {
-    const [first] = forwarded.split(",").map((value) => value.trim());
-    if (first) {
-      return first;
+function normalizeIpCandidate(value: string): string | null {
+  let normalized = value.trim();
+  if (!normalized) {
+    return null;
+  }
+
+  if (normalized.startsWith("\"") && normalized.endsWith("\"")) {
+    normalized = normalized.slice(1, -1).trim();
+  }
+
+  if (normalized.startsWith("for=")) {
+    normalized = normalized.slice(4).trim();
+  }
+
+  if (normalized.startsWith("[") && normalized.includes("]")) {
+    const closingBracketIndex = normalized.indexOf("]");
+    normalized = normalized.slice(1, closingBracketIndex).trim();
+  } else {
+    const colonCount = (normalized.match(/:/g) ?? []).length;
+    if (colonCount === 1 && normalized.includes(".")) {
+      const [host] = normalized.split(":");
+      normalized = host?.trim() ?? normalized;
     }
   }
 
+  normalized = normalized.replace(/^::ffff:/i, "").trim();
+
+  if (!normalized || normalized.toLowerCase() === "unknown") {
+    return null;
+  }
+
+  return normalized;
+}
+
+function readHeaderCandidates(request: Request, headerName: string): string[] {
+  const value = request.headers.get(headerName);
+  if (!value) {
+    return [];
+  }
+
+  if (headerName === "forwarded") {
+    return value
+      .split(",")
+      .flatMap((entry) => entry.split(";"))
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.toLowerCase().startsWith("for="))
+      .map((entry) => normalizeIpCandidate(entry))
+      .filter((entry): entry is string => Boolean(entry));
+  }
+
+  if (headerName === "x-forwarded-for") {
+    return value
+      .split(",")
+      .map((entry) => normalizeIpCandidate(entry))
+      .filter((entry): entry is string => Boolean(entry));
+  }
+
+  const normalized = normalizeIpCandidate(value);
+  return normalized ? [normalized] : [];
+}
+
+const getClientIp = (request: Request): string | null => {
   const headerNames = [
-    "x-real-ip",
+    "x-ominity-client-ip",
     "cf-connecting-ip",
-    "fastly-client-ip",
     "true-client-ip",
+    "fastly-client-ip",
+    "fly-client-ip",
+    "x-vercel-forwarded-for",
+    "x-client-ip",
+    "x-nf-client-connection-ip",
+    "x-real-ip",
+    "forwarded",
+    "x-forwarded-for",
   ];
 
-  for (const name of headerNames) {
-    const value = request.headers.get(name);
-    if (value) {
-      return value;
+  for (const headerName of headerNames) {
+    const candidates = readHeaderCandidates(request, headerName);
+    if (candidates.length > 0) {
+      return candidates[0] ?? null;
     }
   }
 
@@ -68,7 +129,9 @@ const buildServerMetadata = (
   overrides?: MetadataValue | null | undefined,
 ): MetadataValue => {
   const userAgent = request.headers.get("user-agent");
-  const locale = request.headers.get("accept-language")?.split(",")[0];
+  const locale = normalizeMetadataLocale(
+    request.headers.get("accept-language")?.split(",")[0] ?? null,
+  );
   const referrer = request.headers.get("referer") || undefined;
 
   return {
@@ -76,10 +139,22 @@ const buildServerMetadata = (
     page_title: overrides?.page_title ?? null,
     referrer: overrides?.referrer ?? referrer ?? null,
     user_agent: overrides?.user_agent ?? userAgent ?? null,
-    locale: overrides?.locale ?? locale ?? null,
+    locale: normalizeMetadataLocale(overrides?.locale ?? locale ?? null),
     ip_address: overrides?.ip_address ?? getClientIp(request),
   };
 };
+
+const mergeMetadata = (
+  existingMetadata: MetadataValue,
+  serverMetadata: MetadataValue,
+): MetadataValue => ({
+  page_url: existingMetadata.page_url ?? serverMetadata.page_url ?? null,
+  page_title: existingMetadata.page_title ?? serverMetadata.page_title ?? null,
+  referrer: existingMetadata.referrer ?? serverMetadata.referrer ?? null,
+  locale: normalizeMetadataLocale(existingMetadata.locale ?? serverMetadata.locale ?? null),
+  user_agent: serverMetadata.user_agent ?? existingMetadata.user_agent ?? null,
+  ip_address: serverMetadata.ip_address ?? existingMetadata.ip_address ?? null,
+});
 
 const verifyRecaptcha = async (
   token: string | null,
@@ -143,12 +218,40 @@ const stripHoneypotFields = (
   return Object.fromEntries(entries);
 };
 
+const enrichRecaptchaFieldValues = (
+  data: Record<string, unknown>,
+  metadata: MetadataValue,
+): Record<string, unknown> =>
+  Object.fromEntries(
+    Object.entries(data).map(([key, value]) => {
+      if (!value || typeof value !== "object" || Array.isArray(value)) {
+        return [key, value];
+      }
+
+      const record = value as Record<string, unknown>;
+      const token = typeof record.token === "string" ? record.token.trim() : "";
+      if (!token) {
+        return [key, value];
+      }
+
+      return [
+        key,
+        {
+          ...record,
+          ...(record.ip_address === undefined ? { ip_address: metadata.ip_address ?? null } : {}),
+          ...(record.user_agent === undefined ? { user_agent: metadata.user_agent ?? null } : {}),
+        },
+      ];
+    }),
+  );
+
 const normalizePayload = (
   payload: SubmissionPayload,
   metadata: MetadataValue,
 ): SubmissionPayload => {
   const { honeypotFields = [], ...rest } = payload;
   const existingMetadata = (payload.data.metadata as MetadataValue) ?? {};
+  const mergedMetadata = mergeMetadata(existingMetadata, metadata);
   const sanitizedData = stripHoneypotFields(
     payload.data,
     honeypotFields,
@@ -156,11 +259,8 @@ const normalizePayload = (
   return {
     ...rest,
     data: {
-      ...sanitizedData,
-      metadata: {
-        ...existingMetadata,
-        ...metadata,
-      },
+      ...enrichRecaptchaFieldValues(sanitizedData, mergedMetadata),
+      metadata: mergedMetadata,
     },
   };
 };

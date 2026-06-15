@@ -4,6 +4,11 @@ import {
   type OminityFormField,
 } from "../types.js";
 
+export const SERVER_ENRICHED_METADATA_KEYS: MetadataFieldOption[] = [
+  "ip_address",
+  "user_agent",
+];
+
 export const METADATA_KEYS: MetadataFieldOption[] = [
   "page_url",
   "page_title",
@@ -13,13 +18,37 @@ export const METADATA_KEYS: MetadataFieldOption[] = [
   "ip_address",
 ];
 
+const asNonEmptyString = (value: unknown): string | null => {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : null;
+};
+
+export const normalizeMetadataLocale = (input?: string | null): string | null => {
+  const value = asNonEmptyString(input);
+  if (!value) {
+    return null;
+  }
+
+  const [language = ""] = value.replace(/_/g, "-").split("-");
+  const normalizedLanguage = language.trim().toLowerCase();
+
+  return normalizedLanguage.length > 0 ? normalizedLanguage : null;
+};
+
 const getClientLocale = (explicit?: string): string | null => {
-  if (explicit) {
-    return explicit;
+  const explicitLocale = normalizeMetadataLocale(explicit);
+  if (explicitLocale) {
+    return explicitLocale;
   }
+
   if (typeof navigator !== "undefined") {
-    return navigator.language || null;
+    return normalizeMetadataLocale(navigator.language);
   }
+
   return null;
 };
 
@@ -52,36 +81,18 @@ export const buildMetadataPayload = (
 
   requested.forEach((key) => {
     const metadataKey = key as MetadataFieldOption;
-    payload[metadataKey] =
+    if (SERVER_ENRICHED_METADATA_KEYS.includes(metadataKey)) {
+      return;
+    }
+
+    const value =
       overrides?.[metadataKey] ??
       clientMetadata[metadataKey] ??
-      (metadataKey === "ip_address" ? null : "");
+      "";
+
+    payload[metadataKey] =
+      metadataKey === "locale" ? (normalizeMetadataLocale(value) ?? "") : value;
   });
 
   return payload;
-};
-
-export const needsClientIp = (fields: OminityFormField[]): boolean =>
-  fields.some(
-    (field) =>
-      field.type === "metadata" &&
-      Array.isArray(field.options) &&
-      (field.options as string[]).includes("ip_address"),
-  );
-
-export const fetchClientIp = async (): Promise<string | null> => {
-  if (typeof fetch === "undefined") {
-    return null;
-  }
-
-  try {
-    const response = await fetch("https://api.ipify.org?format=json");
-    if (!response.ok) {
-      return null;
-    }
-    const json = (await response.json()) as { ip?: string };
-    return json.ip || null;
-  } catch {
-    return null;
-  }
 };

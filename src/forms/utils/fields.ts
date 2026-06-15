@@ -5,6 +5,7 @@ import {
   type OminityFormField,
   type PhoneFieldValue,
 } from "../types.js";
+import { SERVER_ENRICHED_METADATA_KEYS } from "./metadata.js";
 
 export const sortFields = (
   fields: OminityFormField[],
@@ -51,7 +52,12 @@ export const getMetadataOptions = (field: OminityFormField): string[] => {
     return [];
   }
 
-  return (field.options as string[]).map((option) => option.toString());
+  return (field.options as string[])
+    .map((option) => option.toString())
+    .filter(
+      (option): option is string =>
+        !SERVER_ENRICHED_METADATA_KEYS.includes(option as typeof SERVER_ENRICHED_METADATA_KEYS[number]),
+    );
 };
 
 const parseBoolean = (value: unknown): boolean => {

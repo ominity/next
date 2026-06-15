@@ -54,8 +54,6 @@ import { unstyledTheme } from "./themes/unstyled.js";
 import {
   buildMetadataPayload,
   collectClientMetadata,
-  fetchClientIp,
-  needsClientIp,
 } from "./utils/metadata.js";
 import { useRecaptcha } from "./recaptcha/useRecaptcha.js";
 import {
@@ -712,39 +710,16 @@ const FormRenderer = <T,>({
       return;
     }
 
-    let isMounted = true;
     const clientMetadata = collectClientMetadata(locale);
-
-    const updateMetadata = (ipAddress?: string | null) => {
-      if (!isMounted) {
-        return;
-      }
-      const nextClientMetadata = {
-        ...clientMetadata,
-        ip_address: ipAddress ?? clientMetadata.ip_address ?? null,
-      };
-      const metadataMap: Record<string, MetadataValue> = {};
-      metadataFields.forEach((field) => {
-        metadataMap[field.name] = buildMetadataPayload(
-          field,
-          metadataOverrides,
-          nextClientMetadata,
-        );
-      });
-      setMetadataValues(metadataMap);
-    };
-
-    if (needsClientIp(metadataFields) && !clientMetadata.ip_address) {
-      fetchClientIp()
-        .then((ip) => updateMetadata(ip))
-        .catch(() => updateMetadata(null));
-    } else {
-      updateMetadata(clientMetadata.ip_address ?? null);
-    }
-
-    return () => {
-      isMounted = false;
-    };
+    const metadataMap: Record<string, MetadataValue> = {};
+    metadataFields.forEach((field) => {
+      metadataMap[field.name] = buildMetadataPayload(
+        field,
+        metadataOverrides,
+        clientMetadata,
+      );
+    });
+    setMetadataValues(metadataMap);
   }, [locale, metadataFields, metadataOverrides]);
 
   useEffect(() => {
@@ -958,10 +933,17 @@ const FormRenderer = <T,>({
       }
     }
 
+    const normalizedData = normalizeData(values);
+    if (recaptchaField && recaptchaToken) {
+      normalizedData[recaptchaField.name] = {
+        token: recaptchaToken,
+      };
+    }
+
     const payload: SubmissionPayload = {
       formId: form.id,
       userId: userId ?? null,
-      data: normalizeData(values),
+      data: normalizedData,
       recaptchaToken,
       honeypotFields: honeypotFieldNames,
     };

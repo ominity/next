@@ -3,6 +3,8 @@ import type { RecaptchaConfig } from "../types.js";
 import type { RecaptchaApi } from "./runtime.js";
 import {
   buildRecaptchaScriptSrc,
+  hasRecaptchaExecuteApi,
+  hasRecaptchaWidgetApi,
   resolveRecaptchaApi,
   resolveRecaptchaClientApiNamespace,
   resolveRecaptchaProvider,
@@ -26,6 +28,8 @@ export interface UseRecaptchaResult {
 }
 
 const FORM_SUBMIT_ACTION = "form_submit";
+const RECAPTCHA_INIT_POLL_INTERVAL_MS = 100;
+const RECAPTCHA_INIT_TIMEOUT_MS = 10_000;
 
 export const useRecaptcha = (config?: RecaptchaConfig): UseRecaptchaResult => {
   const [ready, setReady] = useState(false);
@@ -77,6 +81,23 @@ export const useRecaptcha = (config?: RecaptchaConfig): UseRecaptchaResult => {
     );
   }, [config]);
 
+  const hasRequiredCapabilities = useCallback((api: RecaptchaApi | null): boolean => {
+    if (!config || !api) {
+      return false;
+    }
+
+    switch (config.version) {
+      case "v3":
+        return hasRecaptchaExecuteApi(api);
+      case "v2-checkbox":
+        return hasRecaptchaWidgetApi(api);
+      case "v2-invisible":
+        return hasRecaptchaWidgetApi(api) && hasRecaptchaExecuteApi(api);
+      default:
+        return false;
+    }
+  }, [config]);
+
   useEffect(() => {
     if (!config) {
       setReady(false);
@@ -94,27 +115,80 @@ export const useRecaptcha = (config?: RecaptchaConfig): UseRecaptchaResult => {
     const existingScript = document.getElementById(scriptId) as
       | HTMLScriptElement
       | null;
-    const handleLoad = () => {
-      const clientApi = getClientApi();
-      setReady(Boolean(clientApi));
-      setError(clientApi ? null : "Failed to initialize reCAPTCHA.");
+    let pollIntervalId: number | null = null;
+    let pollTimeoutId: number | null = null;
+
+    const stopPolling = () => {
+      if (pollIntervalId !== null) {
+        window.clearInterval(pollIntervalId);
+        pollIntervalId = null;
+      }
+      if (pollTimeoutId !== null) {
+        window.clearTimeout(pollTimeoutId);
+        pollTimeoutId = null;
+      }
     };
+
+    const tryInitialize = (): boolean => {
+      const clientApi = getClientApi();
+      const initialized = hasRequiredCapabilities(clientApi);
+      if (initialized) {
+        stopPolling();
+        setReady(true);
+        setError(null);
+      }
+
+      return initialized;
+    };
+
+    const failInitialization = () => {
+      stopPolling();
+      setReady(false);
+      setError("Failed to initialize reCAPTCHA.");
+    };
+
+    const startPolling = () => {
+      if (tryInitialize()) {
+        return;
+      }
+
+      if (pollIntervalId !== null || pollTimeoutId !== null) {
+        return;
+      }
+
+      pollIntervalId = window.setInterval(() => {
+        tryInitialize();
+      }, RECAPTCHA_INIT_POLL_INTERVAL_MS);
+
+      pollTimeoutId = window.setTimeout(() => {
+        if (!tryInitialize()) {
+          failInitialization();
+        }
+      }, RECAPTCHA_INIT_TIMEOUT_MS);
+    };
+
     const handleError = () => {
+      stopPolling();
       setError("Failed to load reCAPTCHA.");
       setReady(false);
     };
 
+    setReady(false);
+    setError(null);
+
     if (existingScript) {
       if (existingScript.dataset.loaded === "true") {
-        handleLoad();
+        startPolling();
         return;
       }
 
-      existingScript.addEventListener("load", handleLoad);
+      existingScript.addEventListener("load", startPolling);
       existingScript.addEventListener("error", handleError);
+      startPolling();
 
       return () => {
-        existingScript.removeEventListener("load", handleLoad);
+        stopPolling();
+        existingScript.removeEventListener("load", startPolling);
         existingScript.removeEventListener("error", handleError);
       };
     }
@@ -126,24 +200,26 @@ export const useRecaptcha = (config?: RecaptchaConfig): UseRecaptchaResult => {
     script.defer = true;
     script.onload = () => {
       script.dataset.loaded = "true";
-      handleLoad();
+      startPolling();
     };
     script.onerror = handleError;
 
     document.head.appendChild(script);
+    startPolling();
 
     return () => {
+      stopPolling();
       script.onload = null;
       script.onerror = null;
     };
-  }, [config, getClientApi]);
+  }, [config, getClientApi, hasRequiredCapabilities]);
 
   useEffect(() => {
     if (!config || config.version === "v3") {
       return;
     }
     const clientApi = getClientApi();
-    if (!ready || !clientApi) {
+    if (!ready || !hasRecaptchaWidgetApi(clientApi)) {
       return;
     }
     if (!containerRef.current) {
@@ -185,7 +261,7 @@ export const useRecaptcha = (config?: RecaptchaConfig): UseRecaptchaResult => {
       return null;
     }
     const clientApi = getClientApi();
-    if (!clientApi) {
+    if (!hasRecaptchaExecuteApi(clientApi)) {
       return null;
     }
 
@@ -210,7 +286,8 @@ export const useRecaptcha = (config?: RecaptchaConfig): UseRecaptchaResult => {
     if (
       !config ||
       config.version !== "v2-invisible" ||
-      !clientApi ||
+      !hasRecaptchaWidgetApi(clientApi) ||
+      !hasRecaptchaExecuteApi(clientApi) ||
       widgetIdRef.current === null
     ) {
       return Promise.resolve(null);
@@ -267,7 +344,7 @@ export const useRecaptcha = (config?: RecaptchaConfig): UseRecaptchaResult => {
       return;
     }
     const clientApi = getClientApi();
-    if (!clientApi) {
+    if (!hasRecaptchaWidgetApi(clientApi)) {
       return;
     }
     if (widgetIdRef.current !== null) {

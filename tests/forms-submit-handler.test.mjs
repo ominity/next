@@ -69,7 +69,7 @@ test("createOminityFormSubmitHandler strips honeypot and merges metadata", async
   assert.ok(forwardedPayload);
   assert.equal("trap_input" in forwardedPayload.data, false);
   assert.equal("honeypot" in forwardedPayload.data, false);
-  assert.equal(forwardedPayload.data.metadata.locale, "nl-BE");
+  assert.equal(forwardedPayload.data.metadata.locale, "nl");
   assert.equal(forwardedPayload.data.metadata.user_agent, "test-agent");
   assert.equal(forwardedPayload.data.metadata.referrer, "https://example.com/contact");
   assert.equal(forwardedPayload.data.metadata.ip_address, "203.0.113.10");
@@ -108,4 +108,99 @@ test("createOminityFormSubmitHandler supports custom forwardSubmission transport
   assert.equal(response.status, 202);
   assert.equal(body.queued, true);
   assert.equal(body.formId, 101);
+});
+
+test("createOminityFormSubmitHandler enriches nested recaptcha field with visitor context", async () => {
+  let forwardedPayload = null;
+
+  const fetchImpl = async (input, init) => {
+    if (String(input).includes("/v1/modules/forms/submissions")) {
+      forwardedPayload = JSON.parse(init.body);
+
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 201,
+        headers: {
+          "Content-Type": "application/json",
+        },
+      });
+    }
+
+    return new Response("{}", { status: 404 });
+  };
+
+  const handler = createOminityFormSubmitHandler({
+    ominityApiKey: "secret",
+    ominityBaseUrl: "https://example.ominity.test/api",
+    fetchImpl,
+  });
+
+  const response = await handler(new Request("https://example.com/api/forms/submit", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "User-Agent": "test-agent",
+      "X-Forwarded-For": "203.0.113.10",
+    },
+    body: JSON.stringify({
+      formId: 101,
+      userId: null,
+      recaptchaToken: "token-value",
+      data: {
+        recaptcha: {
+          token: "token-value",
+        },
+        metadata: {},
+      },
+    }),
+  }));
+
+  assert.equal(response.status, 201);
+  assert.equal(forwardedPayload.data.recaptcha.token, "token-value");
+  assert.equal(forwardedPayload.data.recaptcha.ip_address, "203.0.113.10");
+  assert.equal(forwardedPayload.data.recaptcha.user_agent, "test-agent");
+});
+
+test("createOminityFormSubmitHandler prefers explicit proxy client IP headers over loopback forwarded values", async () => {
+  let forwardedPayload = null;
+
+  const fetchImpl = async (input, init) => {
+    if (String(input).includes("/v1/modules/forms/submissions")) {
+      forwardedPayload = JSON.parse(init.body);
+
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 201,
+        headers: {
+          "Content-Type": "application/json",
+        },
+      });
+    }
+
+    return new Response("{}", { status: 404 });
+  };
+
+  const handler = createOminityFormSubmitHandler({
+    ominityApiKey: "secret",
+    ominityBaseUrl: "https://example.ominity.test/api",
+    fetchImpl,
+  });
+
+  const response = await handler(new Request("https://example.com/api/forms/submit", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Forwarded-For": "::1",
+      "X-Vercel-Forwarded-For": "198.51.100.24",
+    },
+    body: JSON.stringify({
+      formId: 101,
+      userId: null,
+      recaptchaToken: null,
+      data: {
+        metadata: {},
+      },
+    }),
+  }));
+
+  assert.equal(response.status, 201);
+  assert.equal(forwardedPayload.data.metadata.ip_address, "198.51.100.24");
 });

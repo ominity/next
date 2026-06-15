@@ -6,12 +6,12 @@ import type {
 
 export interface RecaptchaApi {
   ready: (callback: () => void) => void;
-  render: (container: HTMLElement, params: Record<string, unknown>) => number;
-  execute: (
+  render?: (container: HTMLElement, params: Record<string, unknown>) => number;
+  execute?: (
     siteKeyOrWidgetId: string | number,
     options?: Record<string, unknown>,
   ) => Promise<string>;
-  reset: (widgetId?: number) => void;
+  reset?: (widgetId?: number) => void;
 }
 
 interface RecaptchaRuntimeOptions {
@@ -136,13 +136,22 @@ const isRecaptchaApi = (input: unknown): input is RecaptchaApi => {
   }
 
   const api = input as Record<string, unknown>;
-  return (
-    typeof api.ready === "function" &&
-    typeof api.render === "function" &&
-    typeof api.execute === "function" &&
-    typeof api.reset === "function"
-  );
+  return typeof api.ready === "function";
 };
+
+export const hasRecaptchaExecuteApi = (
+  api: RecaptchaApi | null,
+): api is RecaptchaApi & Required<Pick<RecaptchaApi, "execute">> =>
+  Boolean(api && typeof api.execute === "function");
+
+export const hasRecaptchaWidgetApi = (
+  api: RecaptchaApi | null,
+): api is RecaptchaApi & Required<Pick<RecaptchaApi, "render" | "reset">> =>
+  Boolean(
+    api &&
+      typeof api.render === "function" &&
+      typeof api.reset === "function",
+  );
 
 export const resolveRecaptchaApi = (
   root: unknown,

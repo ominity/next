@@ -3,6 +3,8 @@ import { test } from "node:test";
 
 import {
   buildRecaptchaScriptSrc,
+  hasRecaptchaExecuteApi,
+  hasRecaptchaWidgetApi,
   resolveRecaptchaApi,
 } from "../dist/forms/recaptcha/runtime.js";
 
@@ -57,4 +59,20 @@ test("resolveRecaptchaApi supports nested enterprise namespaces", async () => {
     enterpriseApi,
   );
   assert.equal(resolveRecaptchaApi(root, "grecaptcha.missing"), null);
+});
+
+test("resolveRecaptchaApi accepts classic v3 api shape", () => {
+  const v3Api = {
+    ready: () => {},
+    execute: async () => "classic-v3-token",
+  };
+  const root = {
+    grecaptcha: v3Api,
+  };
+
+  const resolved = resolveRecaptchaApi(root, "grecaptcha");
+
+  assert.equal(resolved, v3Api);
+  assert.equal(hasRecaptchaExecuteApi(resolved), true);
+  assert.equal(hasRecaptchaWidgetApi(resolved), false);
 });

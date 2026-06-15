@@ -171,6 +171,18 @@ export interface PendingFileUploadResponse {
 
 export type MetadataValue = Partial<Record<MetadataFieldOption, string | null>>;
 
+export interface RecaptchaFieldValue {
+  token: string;
+  ip_address?: string | null;
+  user_agent?: string | null;
+  score?: number | null;
+  action?: string | null;
+  hostname?: string | null;
+  provider?: RecaptchaProvider;
+  version?: RecaptchaVersion;
+  verified_at?: string | null;
+}
+
 export type RecaptchaProvider = "classic" | "enterprise";
 export type RecaptchaVersion = "v3" | "v2-checkbox" | "v2-invisible";
 
