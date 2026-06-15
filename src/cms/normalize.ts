@@ -45,12 +45,32 @@ function asString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
+function asNonEmptyString(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  return value.length > 0 ? value : undefined;
+}
+
 function asBoolean(value: unknown): boolean | undefined {
   return typeof value === "boolean" ? value : undefined;
 }
 
 function asArray(value: unknown): ReadonlyArray<unknown> {
   return Array.isArray(value) ? value : [];
+}
+
+function asId(value: unknown): string | undefined {
+  if (typeof value === "string" && value.length > 0) {
+    return value;
+  }
+
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return String(value);
+  }
+
+  return undefined;
 }
 
 function withDefaultId(prefix: string, fallback: string, id?: string): string {
@@ -204,21 +224,95 @@ export function normalizeCmsComponent(input: unknown, fallbackId: string): CmsPa
   };
 }
 
-function normalizePageTranslation(input: unknown, fallbackLocale: string): CmsPageTranslation | null {
-  if (!isRecord(input)) {
-    return null;
+function pathFromSlugValue(value: unknown): string | undefined {
+  if (typeof value === "string") {
+    return normalizePath(value);
   }
 
-  const locale = normalizeLocaleCode(asString(input.locale) ?? fallbackLocale);
-  const path = normalizePath(asString(input.path) ?? asString(input.slug) ?? "/");
-  const canonical = asBoolean(input.canonical);
+  if (value === null) {
+    return "/";
+  }
 
-  return {
-    locale,
-    path,
-    slug: toSlug(path),
-    ...(typeof canonical === "boolean" ? { canonical } : {}),
-  };
+  return undefined;
+}
+
+function resolveRouteLikePath(input: UnknownRecord): string {
+  const explicitPath = pathFromSlugValue(input.path);
+  if (explicitPath) {
+    return explicitPath;
+  }
+
+  const explicitSlug = pathFromSlugValue(input.slug);
+  if (explicitSlug) {
+    return explicitSlug;
+  }
+
+  const parameters = isRecord(input.parameters) ? input.parameters : undefined;
+  const parameterPath = parameters ? pathFromSlugValue(parameters.path) : undefined;
+  if (parameterPath) {
+    return parameterPath;
+  }
+
+  const parameterSlug = parameters ? pathFromSlugValue(parameters.slug) : undefined;
+  if (parameterSlug) {
+    return parameterSlug;
+  }
+
+  return "/";
+}
+
+function normalizePageTranslations(
+  input: unknown,
+  fallbackLocale: string,
+): ReadonlyArray<CmsPageTranslation> {
+  if (Array.isArray(input)) {
+    return input.flatMap((entry) => {
+      if (!isRecord(entry)) {
+        return [];
+      }
+
+      const locale = normalizeLocaleCode(asString(entry.locale) ?? fallbackLocale);
+      const path = normalizePath(asString(entry.path) ?? asString(entry.slug) ?? "/");
+      const canonical = asBoolean(entry.canonical);
+
+      return [{
+        locale,
+        path,
+        slug: toSlug(path),
+        ...(typeof canonical === "boolean" ? { canonical } : {}),
+      }];
+    });
+  }
+
+  if (!isRecord(input)) {
+    return [];
+  }
+
+  return Object.entries(input).flatMap(([localeKey, entry]) => {
+    if (typeof entry === "string") {
+      const path = normalizePath(entry);
+      return [{
+        locale: normalizeLocaleCode(localeKey),
+        path,
+        slug: toSlug(path),
+      }];
+    }
+
+    if (!isRecord(entry)) {
+      return [];
+    }
+
+    const locale = normalizeLocaleCode(asString(entry.locale) ?? localeKey);
+    const path = resolveRouteLikePath(entry);
+    const canonical = asBoolean(entry.canonical);
+
+    return [{
+      locale,
+      path,
+      slug: toSlug(path),
+      ...(typeof canonical === "boolean" ? { canonical } : {}),
+    }];
+  });
 }
 
 function normalizeRobots(input: unknown): CmsSeoRobots | undefined {
@@ -248,29 +342,50 @@ function normalizeSeo(input: unknown): CmsSeo | undefined {
     return undefined;
   }
 
-  const og = input.open_graph ?? input.opengraph ?? input.openGraph;
+  const og = isRecord(input.og)
+    ? input.og
+    : isRecord(input.open_graph)
+      ? input.open_graph
+      : isRecord(input.opengraph)
+        ? input.opengraph
+        : isRecord(input.openGraph)
+          ? input.openGraph
+          : undefined;
   let openGraph: CmsSeo["openGraph"];
 
-  if (isRecord(og)) {
-    const ogTitle = asString(og.title);
-    const ogDescription = asString(og.description);
-    const ogType = asString(og.type);
-    const images = asArray(og.images).flatMap((image) => {
-      if (!isRecord(image)) {
-        return [];
-      }
+  const normalizeOpenGraphImages = (value: unknown): ReadonlyArray<NonNullable<NonNullable<CmsSeo["openGraph"]>["images"]>[number]> => {
+    if (typeof value === "string" && value.length > 0) {
+      return [{ url: value }];
+    }
 
-      const url = asString(image.url);
-      if (!url) {
-        return [];
-      }
+    if (Array.isArray(value)) {
+      return value.flatMap((entry) => normalizeOpenGraphImages(entry));
+    }
 
-      const alt = asString(image.alt);
-      return [{
-        url,
-        ...(typeof alt === "string" ? { alt } : {}),
-      }];
-    });
+    if (!isRecord(value)) {
+      return [];
+    }
+
+    const url = asNonEmptyString(value.url) ?? asNonEmptyString(value.src) ?? asNonEmptyString(value.href);
+    if (!url) {
+      return [];
+    }
+
+    const alt = asNonEmptyString(value.alt);
+    return [{
+      url,
+      ...(typeof alt === "string" ? { alt } : {}),
+    }];
+  };
+
+  if (og) {
+    const ogTitle = asNonEmptyString(og.title);
+    const ogDescription = asNonEmptyString(og.description);
+    const ogType = asNonEmptyString(og.type);
+    const images = [
+      ...normalizeOpenGraphImages(og.images),
+      ...normalizeOpenGraphImages(og.image),
+    ];
 
     const normalizedOpenGraph: NonNullable<CmsSeo["openGraph"]> = {
       ...(typeof ogTitle === "string" ? { title: ogTitle } : {}),
@@ -285,9 +400,11 @@ function normalizeSeo(input: unknown): CmsSeo | undefined {
   }
 
   const robots = normalizeRobots(input.robots);
-  const title = asString(input.title);
-  const description = asString(input.description);
-  const canonicalUrl = asString(input.canonical_url) ?? asString(input.canonicalUrl);
+  const title = asNonEmptyString(input.title);
+  const description = asNonEmptyString(input.description);
+  const canonicalUrl = asNonEmptyString(input.canonical_url)
+    ?? asNonEmptyString(input.canonicalUrl)
+    ?? asNonEmptyString(input.canonical);
 
   const seo: CmsSeo = {
     ...(typeof title === "string" ? { title } : {}),
@@ -312,47 +429,76 @@ export function normalizePage(input: unknown): CmsPage {
     });
   }
 
-  const locale = normalizeLocaleCode(asString(value.locale) ?? asString(value.language) ?? "en");
-  const path = normalizePath(asString(value.path) ?? asString(value.slug) ?? "/");
+  const normalizeStatus = (pageValue: UnknownRecord): CmsPage["status"] => {
+    const status = asString(pageValue.status);
+    if (status === "published" || status === "draft" || status === "unknown") {
+      return status;
+    }
+
+    const published = asBoolean(pageValue.published);
+    if (published === true) {
+      return "published";
+    }
+
+    if (published === false) {
+      return "draft";
+    }
+
+    return "unknown";
+  };
+
+  const extractPageTranslations = (
+    pageValue: UnknownRecord,
+    fallbackLocale: string,
+  ): ReadonlyArray<CmsPageTranslation> => {
+    const routeTranslations = normalizePageTranslations(pageValue.routes, fallbackLocale);
+    if (routeTranslations.length > 0) {
+      return routeTranslations;
+    }
+
+    return normalizePageTranslations(
+      pageValue.translations ?? pageValue.localized_paths ?? pageValue.localizations,
+      fallbackLocale,
+    );
+  };
+
+  const initialLocale = normalizeLocaleCode(asString(value.locale) ?? asString(value.language) ?? "en");
+  const translations = extractPageTranslations(value, initialLocale);
+  const locale = translations[0]?.locale ?? initialLocale;
+  const explicitPath = pathFromSlugValue(value.path) ?? pathFromSlugValue(value.slug);
+  const path = explicitPath
+    ?? translations.find((entry) => entry.locale === locale)?.path
+    ?? translations[0]?.path
+    ?? "/";
   const canonicalPath = normalizePath(
     asString(value.canonical_path) ?? asString(value.canonicalPath) ?? path,
   );
 
   const rawComponents = value.components ?? value.page_content ?? value.content ?? value.body;
   const components = asArray(rawComponents).map((entry, index) => normalizeCmsComponent(entry, `root.${index}`));
-
-  const rawTranslations = value.translations ?? value.localized_paths ?? value.localizations;
-  const translations = asArray(rawTranslations)
-    .map((entry) => normalizePageTranslation(entry, locale))
-    .filter((entry): entry is CmsPageTranslation => entry !== null);
-
-  if (translations.length === 0) {
-    translations.push({
-      locale,
-      path,
-      slug: toSlug(path),
-      canonical: true,
-    });
-  }
-
-  const title = asString(value.title);
-  const description = asString(value.description);
-  const seo = normalizeSeo(value.seo ?? value.metadata);
-  const published = asBoolean(value.published);
-  const status = (asString(value.status) as CmsPage["status"] | undefined)
-    ?? (published === true ? "published" : published === false ? "draft" : "unknown");
+  const normalizedTranslations = translations.length > 0
+    ? translations
+    : [{
+        locale,
+        path,
+        slug: toSlug(path),
+        canonical: true,
+      }];
+  const seo = normalizeSeo(value.meta ?? value.metadata ?? value.seo);
+  const title = seo?.title ?? asNonEmptyString(value.title) ?? asNonEmptyString(value.name);
+  const description = seo?.description ?? asNonEmptyString(value.description);
 
   return {
-    id: withDefaultId("page", path, asString(value.id) ?? asString(value.uuid) ?? asString(value._id)),
+    id: withDefaultId("page", path, asId(value.id) ?? asId(value.uuid) ?? asId(value._id)),
     locale,
     path,
     slug: toSlug(path),
     canonicalPath,
     ...(typeof title === "string" ? { title } : {}),
     ...(typeof description === "string" ? { description } : {}),
-    status,
+    status: normalizeStatus(value),
     components,
-    translations,
+    translations: normalizedTranslations,
     ...(seo ? { seo } : {}),
   };
 }
@@ -406,65 +552,81 @@ export function normalizeMenus(input: unknown): ReadonlyArray<CmsMenu> {
 }
 
 function normalizeRouteTranslations(input: unknown): Readonly<Record<string, string>> {
-  if (Array.isArray(input)) {
-    const entries: Array<[string, string]> = [];
-    for (const entry of input) {
-      if (!isRecord(entry)) {
-        continue;
-      }
-
-      const locale = asString(entry.locale);
-      const path = asString(entry.path) ?? asString(entry.slug);
-      if (!locale || !path) {
-        continue;
-      }
-
-      entries.push([normalizeLocaleCode(locale), normalizePath(path)]);
-    }
-
-    return Object.fromEntries(entries);
-  }
-
-  if (isRecord(input)) {
-    const entries: Array<[string, string]> = [];
-    for (const [locale, path] of Object.entries(input)) {
-      if (typeof path !== "string") {
-        continue;
-      }
-
-      entries.push([normalizeLocaleCode(locale), normalizePath(path)]);
-    }
-
-    return Object.fromEntries(entries);
-  }
-
-  return {};
+  const translations = normalizePageTranslations(input, "en");
+  return Object.fromEntries(translations.map((entry) => [entry.locale, entry.path]));
 }
 
 export function normalizeRoutes(input: unknown): ReadonlyArray<CmsRoute> {
-  const source = unwrapCollection(input, ["routes", "items", "data"]);
+  const source = unwrapCollection(input, ["routes", "items", "data", "pages"]);
+  const routes: CmsRoute[] = [];
 
-  return source.map((entry, index) => {
-    const value = isRecord(entry) ? entry : {};
-    const locale = normalizeLocaleCode(asString(value.locale) ?? "en");
-    const path = normalizePath(asString(value.path) ?? asString(value.slug) ?? "/");
-    const translations = normalizeRouteTranslations(value.translations ?? value.localized_paths);
-    const canonicalPath = normalizePath(
-      asString(value.canonical_path) ?? asString(value.canonicalPath) ?? path,
+  const normalizeSingleRoute = (
+    routeInput: UnknownRecord,
+    fallbackId: string,
+    parentPageId?: string,
+  ): CmsRoute => {
+    const locale = normalizeLocaleCode(asString(routeInput.locale) ?? "en");
+    const path = resolveRouteLikePath(routeInput);
+    const translations = normalizeRouteTranslations(
+      routeInput.routes ?? routeInput.translations ?? routeInput.localized_paths,
     );
-    const redirectsToCanonical = asBoolean(value.redirects_to_canonical) ?? asBoolean(value.redirectsToCanonical);
+    const pageId = withDefaultId(
+      "page",
+      fallbackId,
+      asId(routeInput.page_id)
+        ?? asId(routeInput.pageId)
+        ?? asId(routeInput.page)
+        ?? (isRecord(routeInput.parameters) ? asId(routeInput.parameters.id) : undefined)
+        ?? parentPageId,
+    );
+    const canonicalPath = normalizePath(
+      asString(routeInput.canonical_path) ?? asString(routeInput.canonicalPath) ?? path,
+    );
+    const redirectsToCanonical = asBoolean(routeInput.redirects_to_canonical)
+      ?? asBoolean(routeInput.redirectsToCanonical);
 
     return {
-      id: withDefaultId("route", `${index}`, asString(value.id) ?? asString(value.uuid)),
-      pageId: withDefaultId("page", `${index}`, asString(value.page_id) ?? asString(value.pageId) ?? asString(value.page)),
+      id: withDefaultId("route", fallbackId, asId(routeInput.id) ?? asId(routeInput.uuid)),
+      pageId,
       locale,
       path,
       slug: toSlug(path),
       canonicalPath,
-      translations,
+      translations: Object.keys(translations).length > 0 ? translations : { [locale]: path },
       ...(typeof redirectsToCanonical === "boolean" ? { redirectsToCanonical } : {}),
     };
+  };
+
+  source.forEach((entry, index) => {
+    if (!isRecord(entry)) {
+      return;
+    }
+
+    if (isRecord(entry.routes)) {
+      const pageId = asId(entry.id) ?? `${index}`;
+      const sharedTranslations = normalizeRouteTranslations(entry.routes);
+
+      for (const [localeKey, routeEntry] of Object.entries(entry.routes)) {
+        if (!isRecord(routeEntry)) {
+          continue;
+        }
+
+        const normalizedRoute = normalizeSingleRoute(routeEntry, `${index}.${localeKey}`, pageId);
+        routes.push({
+          ...normalizedRoute,
+          translations: Object.keys(sharedTranslations).length > 0
+            ? sharedTranslations
+            : normalizedRoute.translations,
+        });
+      }
+
+      return;
+    }
+
+    routes.push(normalizeSingleRoute(entry, `${index}`));
   });
+
+  return routes;
 }
 
 function normalizeLocaleEntryFromLanguage(

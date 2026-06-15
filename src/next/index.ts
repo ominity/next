@@ -14,3 +14,4 @@ export * from "./tracking-types.js";
 export * from "./tracking-provider.js";
 export * from "./home-locale-redirect.js";
 export * from "./intl.js";
+export * from "./site-support.js";

@@ -12,6 +12,7 @@ export {
 } from "./errors.js";
 export { createFormsDebugLogger } from "./debug.js";
 export { createShadcnFormAdapters } from "./shadcn.js";
+export { createShadcnFormAdapters as createShadcnFormComponents } from "./shadcn.js";
 export {
   deriveFormRecaptchaConfig,
   resolveFormRecaptchaConfig,
@@ -76,3 +77,14 @@ export { tailwindDefaultTheme } from "./themes/tailwindDefault.js";
 export { unstyledTheme } from "./themes/unstyled.js";
 export { loungeDepotFormTheme } from "./themes/loungeDepot.js";
 export { createOminityFormSubmitHandler } from "./server/submitHandler.js";
+export {
+  createOminityFormSubmitRouteHandler,
+  createOminityFormSubmissionUpdateRouteHandler,
+  createOminityFormUploadPresignRouteHandler,
+} from "./server/route-handlers.js";
+export type {
+  CreateOminityFormSubmitRouteHandlerConfig,
+  CreateOminityFormSubmissionUpdateRouteHandlerConfig,
+  CreateOminityFormUploadPresignRouteHandlerConfig,
+  OminityRequestLanguageResolver,
+} from "./server/route-handlers.js";

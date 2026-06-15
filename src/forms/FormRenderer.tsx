@@ -628,9 +628,12 @@ const FormRenderer = <T,>({
   onSubmitSuccess,
   onSubmitError,
   adapters,
+  components,
   inlineBreakpoint = "md",
   fileUploadUrl,
 }: FormRendererProps<T>) => {
+  const resolvedAdapters = adapters ?? components;
+
   const allFields = useMemo(() => {
     const incoming = form?._embedded?.form_fields ?? [];
     return sortFields(incoming);
@@ -857,23 +860,23 @@ const FormRenderer = <T,>({
     recaptchaField?.validation?.message ??
     "Complete the security check.";
 
-  const FieldComponent = adapters?.Field ?? DefaultField;
-  const FieldContentComponent = adapters?.FieldContent ?? DefaultFieldContent;
-  const FieldLabelComponent = adapters?.FieldLabel ?? DefaultFieldLabel;
-  const FieldDescriptionComponent = adapters?.FieldDescription ?? DefaultFieldDescription;
-  const FieldErrorComponent = adapters?.FieldError ?? DefaultFieldError;
-  const FieldSetComponent = adapters?.FieldSet ?? DefaultFieldSet;
-  const FieldLegendComponent = adapters?.FieldLegend ?? DefaultFieldLegend;
-  const FieldGroupComponent = adapters?.FieldGroup ?? DefaultFieldGroup;
-  const InputComponent = adapters?.Input ?? DefaultInput;
-  const TextareaComponent = adapters?.Textarea ?? DefaultTextarea;
-  const SelectComponent = adapters?.Select ?? DefaultSelect;
-  const MultiSelectComponent = adapters?.MultiSelect ?? DefaultMultiSelect;
-  const CheckboxComponent = adapters?.Checkbox ?? DefaultCheckbox;
-  const ButtonComponent = adapters?.Button ?? DefaultButton;
-  const PhoneInputComponent = adapters?.PhoneInput ?? DefaultPhoneInput;
-  const FileInputComponent = adapters?.FileInput ?? DefaultFileInput;
-  const HtmlBlockComponent = adapters?.HtmlBlock ?? DefaultHtmlBlock;
+  const FieldComponent = resolvedAdapters?.Field ?? DefaultField;
+  const FieldContentComponent = resolvedAdapters?.FieldContent ?? DefaultFieldContent;
+  const FieldLabelComponent = resolvedAdapters?.FieldLabel ?? DefaultFieldLabel;
+  const FieldDescriptionComponent = resolvedAdapters?.FieldDescription ?? DefaultFieldDescription;
+  const FieldErrorComponent = resolvedAdapters?.FieldError ?? DefaultFieldError;
+  const FieldSetComponent = resolvedAdapters?.FieldSet ?? DefaultFieldSet;
+  const FieldLegendComponent = resolvedAdapters?.FieldLegend ?? DefaultFieldLegend;
+  const FieldGroupComponent = resolvedAdapters?.FieldGroup ?? DefaultFieldGroup;
+  const InputComponent = resolvedAdapters?.Input ?? DefaultInput;
+  const TextareaComponent = resolvedAdapters?.Textarea ?? DefaultTextarea;
+  const SelectComponent = resolvedAdapters?.Select ?? DefaultSelect;
+  const MultiSelectComponent = resolvedAdapters?.MultiSelect ?? DefaultMultiSelect;
+  const CheckboxComponent = resolvedAdapters?.Checkbox ?? DefaultCheckbox;
+  const ButtonComponent = resolvedAdapters?.Button ?? DefaultButton;
+  const PhoneInputComponent = resolvedAdapters?.PhoneInput ?? DefaultPhoneInput;
+  const FileInputComponent = resolvedAdapters?.FileInput ?? DefaultFileInput;
+  const HtmlBlockComponent = resolvedAdapters?.HtmlBlock ?? DefaultHtmlBlock;
 
   const onSubmit = handleSubmit(async (values) => {
     setSubmissionError(null);
@@ -1397,7 +1400,7 @@ const FormRenderer = <T,>({
           rules={getControllerRules(getSelectValidation(field))}
           render={({ field: controllerField }) => {
             const options = getFieldOptions(field);
-            const RadioGroupComponent = adapters?.RadioGroup;
+            const RadioGroupComponent = resolvedAdapters?.RadioGroup;
 
             return (
               <FieldSetComponent className={getSlotClass("field.wrapper", field)}>

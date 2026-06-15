@@ -63,6 +63,34 @@ const submitHandler = createOminityFormSubmitHandler({
 export const POST = (request: Request) => submitHandler(request);
 ```
 
+If you want the package to own most of the route logic, use the higher-level route factories instead:
+
+```ts
+import {
+  createOminityFormSubmissionUpdateRouteHandler,
+  createOminityFormSubmitRouteHandler,
+  createOminityFormUploadPresignRouteHandler,
+} from "@ominity/next/forms";
+
+export const POST = createOminityFormSubmitRouteHandler({
+  ominityApiKey: process.env.OMINITY_API_KEY,
+  ominityBaseUrl: process.env.OMINITY_API_URL,
+  useMockData: process.env.OMINITY_USE_MOCK_DATA === "true",
+  formsValidateFormId: true,
+});
+
+export const PATCH = createOminityFormSubmissionUpdateRouteHandler({
+  ominityApiKey: process.env.OMINITY_API_KEY,
+  ominityBaseUrl: process.env.OMINITY_API_URL,
+});
+
+export const POST_UPLOAD = createOminityFormUploadPresignRouteHandler({
+  ominityApiKey: process.env.OMINITY_API_KEY,
+  ominityBaseUrl: process.env.OMINITY_API_URL,
+  siteUrl: process.env.NEXT_PUBLIC_SITE_URL,
+});
+```
+
 What this handler does:
 
 - validates request shape

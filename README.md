@@ -332,9 +332,10 @@ This lets starter projects consume `next-intl` via `@ominity/next` without addin
 
 - `FormRenderer` client component for Ominity form definitions
 - `createOminityFormSubmitHandler` server route helper
+- route factories for submit/upload/update endpoints
 - built-in themes (`tailwindDefaultTheme`, `unstyledTheme`, `loungeDepotFormTheme`)
 - `createFormsClient` with response normalization + optional adapter integration
-- `createShadcnFormComponents` helper for shadcn UI wiring
+- `createShadcnFormAdapters` / `createShadcnFormComponents` helper for shadcn UI wiring
 
 Example:
 
@@ -366,6 +367,18 @@ const handler = createOminityFormSubmitHandler({
 export const POST = (request: Request) => handler(request);
 ```
 
+For lower-code App Router wiring, the package also exposes route factories:
+
+```ts
+import { createOminityFormSubmitRouteHandler } from "@ominity/next/forms";
+
+export const POST = createOminityFormSubmitRouteHandler({
+  ominityApiKey: process.env.OMINITY_API_KEY,
+  ominityBaseUrl: process.env.OMINITY_API_URL,
+  useMockData: process.env.OMINITY_USE_MOCK_DATA === "true",
+});
+```
+
 ## Visitor tracking
 
 Use a first-party Next route plus `TrackingProvider` so carts, orders, and browser tracking share one UUID `visitorId`.
@@ -373,14 +386,14 @@ Use a first-party Next route plus `TrackingProvider` so carts, orders, and brows
 Create a same-origin proxy route. A short neutral path such as `/api/omt` is less likely to be filtered than direct third-party analytics requests:
 
 ```ts
-import { createOminityTrackingProxyHandler } from "@ominity/next/tracking/proxy";
+import { createOminityTrackingProxyRouteHandlers } from "@ominity/next/tracking/proxy";
 
-const handler = createOminityTrackingProxyHandler({
-  ominityApiKey: process.env.OMINITY_API_KEY ?? "",
+export const { GET, POST } = createOminityTrackingProxyRouteHandlers({
+  ominityApiKey: process.env.OMINITY_API_KEY,
   ominityBaseUrl: process.env.OMINITY_API_URL,
+  enabled: process.env.OMINITY_TRACKING_ENABLED !== "false",
+  debug: process.env.OMINITY_DEBUG_LOGS === "true",
 });
-
-export const POST = (request: Request) => handler(request);
 ```
 
 Wrap your app with the client provider:

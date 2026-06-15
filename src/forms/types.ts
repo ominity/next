@@ -470,6 +470,7 @@ export interface FormRendererProps<T = unknown> {
   onSubmitSuccess?: (result: SubmitResult<T>) => void;
   onSubmitError?: (result: SubmitResult<never>) => void;
   adapters?: FormAdapters;
+  components?: FormAdapters;
   inlineBreakpoint?: InlineBreakpoint;
   fileUploadUrl?: string;
 }

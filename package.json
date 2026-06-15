@@ -1,6 +1,6 @@
 {
   "name": "@ominity/next",
-  "version": "1.3.5",
+  "version": "1.6.0",
   "description": "Next.js App Router integration layer for Ominity CMS.",
   "homepage": "https://github.com/ominity/next#readme",
   "bugs": {
