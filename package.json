@@ -1,6 +1,6 @@
 {
   "name": "@ominity/next",
-  "version": "1.7.0",
+  "version": "1.8.0",
   "description": "Next.js App Router integration layer for Ominity CMS.",
   "homepage": "https://github.com/ominity/next#readme",
   "bugs": {
@@ -29,6 +29,10 @@
     "./next": {
       "types": "./dist/next/index.d.ts",
       "default": "./dist/next/index.js"
+    },
+    "./seo": {
+      "types": "./dist/seo/index.d.ts",
+      "default": "./dist/seo/index.js"
     },
     "./intl": {
       "types": "./dist/next/intl.d.ts",
@@ -62,9 +66,49 @@
       "types": "./dist/commerce/index.d.ts",
       "default": "./dist/commerce/index.js"
     },
+    "./commerce/react": {
+      "types": "./dist/commerce/react.d.ts",
+      "default": "./dist/commerce/react.js"
+    },
+    "./commerce/server": {
+      "types": "./dist/commerce/server/index.d.ts",
+      "default": "./dist/commerce/server/index.js"
+    },
     "./auth": {
       "types": "./dist/auth/index.d.ts",
       "default": "./dist/auth/index.js"
+    },
+    "./auth/react": {
+      "types": "./dist/auth/react.d.ts",
+      "default": "./dist/auth/react.js"
+    },
+    "./auth/server": {
+      "types": "./dist/auth/server/index.d.ts",
+      "default": "./dist/auth/server/index.js"
+    },
+    "./customer-accounts": {
+      "types": "./dist/customer-accounts/index.d.ts",
+      "default": "./dist/customer-accounts/index.js"
+    },
+    "./customer-accounts/react": {
+      "types": "./dist/customer-accounts/react.d.ts",
+      "default": "./dist/customer-accounts/react.js"
+    },
+    "./customer-accounts/server": {
+      "types": "./dist/customer-accounts/server/index.d.ts",
+      "default": "./dist/customer-accounts/server/index.js"
+    },
+    "./actions": {
+      "types": "./dist/actions/index.d.ts",
+      "default": "./dist/actions/index.js"
+    },
+    "./actions/react": {
+      "types": "./dist/actions/react.d.ts",
+      "default": "./dist/actions/react.js"
+    },
+    "./actions/server": {
+      "types": "./dist/actions/server/index.d.ts",
+      "default": "./dist/actions/server/index.js"
     },
     "./debug": {
       "types": "./dist/debug/index.d.ts",
@@ -100,7 +144,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.0.0",
-    "@ominity/api-typescript": "^1.1.6",
+    "@ominity/api-typescript": "^1.4.3",
     "eslint": "^9.0.0",
     "globals": "^15.0.0",
     "next": "^16.2.3",
@@ -111,7 +155,7 @@
     "typescript-eslint": "^8.0.0"
   },
   "peerDependencies": {
-    "@ominity/api-typescript": "^1.1.6",
+    "@ominity/api-typescript": "^1.4.3",
     "next": "^15.0.0 || ^16.0.0",
     "react": "^18.0.0 || ^19.0.0",
     "react-dom": "^18.0.0 || ^19.0.0",

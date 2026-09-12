@@ -402,11 +402,6 @@ export function createOminityCommerceCartItemsRouteHandlers(
           cartId: current.cart.id,
           productId: String(productId),
           quantity,
-          ...(typeof record.sku === "string" ? { sku: record.sku } : {}),
-          ...(typeof record.title === "string" ? { title: record.title } : {}),
-          ...(typeof record.unitPrice === "number" ? { unitPrice: record.unitPrice } : {}),
-          ...(typeof record.currency === "string" ? { currency: record.currency } : {}),
-          ...(typeof record.imageUrl === "string" ? { imageUrl: record.imageUrl } : {}),
         });
         writeMockCartCookie(config, cookieStore, snapshot.cart.id);
 

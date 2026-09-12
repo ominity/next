@@ -10,6 +10,7 @@ import type {
   AuthTokenId,
   AuthUserCustomer,
   AuthUserId,
+  AuthUserLogin,
   OAuthTokenResponse,
 } from "./types.js";
 
@@ -288,6 +289,45 @@ export function normalizeRecoveryCode(payload: unknown): AuthRecoveryCode {
 
 export function normalizeRecoveryCodeList(payload: unknown): AuthPaginatedResult<AuthRecoveryCode> {
   return normalizePaginatedShape(payload, normalizeRecoveryCode, ["user_recovery_codes"]);
+}
+
+export function normalizeUserLogin(payload: unknown): AuthUserLogin {
+  if (!isRecord(payload)) {
+    throw new AuthClientError("User login activity payload is invalid.", {
+      details: { payload },
+    });
+  }
+
+  const id = asOptionalNumber(payload.id);
+  const userId = asOptionalNumber(payload.userId);
+  if (typeof id !== "number" || typeof userId !== "number") {
+    throw new AuthClientError("User login activity payload missing required fields.", {
+      details: { payload },
+    });
+  }
+
+  return {
+    resource: "user_login",
+    id,
+    userId,
+    ...(typeof payload.ipAddress === "string" ? { ipAddress: payload.ipAddress } : {}),
+    ...(typeof payload.location === "string" || payload.location === null
+      ? { location: payload.location }
+      : {}),
+    ...(typeof payload.device === "string" || payload.device === null
+      ? { device: payload.device }
+      : {}),
+    ...(typeof payload.browser === "string" || payload.browser === null
+      ? { browser: payload.browser }
+      : {}),
+    ...(typeof payload.userAgent === "string" ? { userAgent: payload.userAgent } : {}),
+    ...(typeof payload.createdAt === "string" ? { createdAt: payload.createdAt } : {}),
+    raw: payload,
+  };
+}
+
+export function normalizeUserLoginList(payload: unknown): AuthPaginatedResult<AuthUserLogin> {
+  return normalizePaginatedShape(payload, normalizeUserLogin, ["user_logins"]);
 }
 
 export function normalizeOAuthAccount(payload: unknown): AuthOAuthAccount {

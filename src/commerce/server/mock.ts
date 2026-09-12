@@ -164,11 +164,6 @@ export function mockAddCartItem(input: {
   readonly cartId: string;
   readonly productId: string;
   readonly quantity: number;
-  readonly sku?: string;
-  readonly title?: string;
-  readonly unitPrice?: number;
-  readonly currency?: string;
-  readonly imageUrl?: string;
 }): {
   readonly cart: CommerceCart;
   readonly items: ReadonlyArray<CommerceCartItem>;
@@ -179,12 +174,8 @@ export function mockAddCartItem(input: {
   });
 
   const quantity = Number.isFinite(input.quantity) && input.quantity > 0 ? Math.floor(input.quantity) : 1;
-  const unitPrice = Number.isFinite(input.unitPrice) && input.unitPrice && input.unitPrice > 0
-    ? input.unitPrice
-    : 99;
-  const currency = typeof input.currency === "string" && input.currency.length > 0
-    ? input.currency.toUpperCase()
-    : record.currency;
+  const unitPrice = 99;
+  const currency = record.currency;
 
   if (existing) {
     const currentQuantity = Number(existing.quantity ?? 0);
@@ -213,11 +204,7 @@ export function mockAddCartItem(input: {
       totalAmount: money(unitPrice * quantity, currency),
       price: money(unitPrice, currency),
       totalPrice: money(unitPrice * quantity, currency),
-      ...(typeof input.sku === "string" && input.sku.length > 0 ? { sku: input.sku } : {}),
-      ...(typeof input.title === "string" && input.title.length > 0 ? { title: input.title } : {}),
-      ...(typeof input.imageUrl === "string" && input.imageUrl.length > 0
-        ? { imageUrl: input.imageUrl }
-        : {}),
+      title: `Product ${input.productId}`,
     });
   }
 

@@ -731,7 +731,7 @@ function normalizeChannelLanguage(input: unknown): CmsChannelLanguage | null {
   const isActive = asBoolean(input.isActive);
 
   return {
-    id: withDefaultId("channel-language", code, asString(input.id)),
+    id: withDefaultId("channel-language", code, asId(input.id)),
     code: normalizeLocaleCode(code),
     name,
     ...(typeof direction === "string" ? { direction } : {}),
@@ -794,7 +794,7 @@ export function normalizeChannel(input: unknown): CmsChannel {
     });
   }
 
-  const idRaw = asString(value.id);
+  const idRaw = asId(value.id);
   const identifier = asString(value.identifier);
   const name = asString(value.name);
 

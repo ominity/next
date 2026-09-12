@@ -1,7 +1,11 @@
 import { HTTPClient, type Fetcher } from "@ominity/api-typescript";
 
 import { appendOminityDebugEntry } from "./store.js";
-import type { OminityDebugSource } from "./types.js";
+import type {
+  OminityDebugRequestContext,
+  OminityDebugRequestKind,
+  OminityDebugSource,
+} from "./types.js";
 
 const DEFAULT_BODY_PREVIEW_LIMIT = 4000;
 const DEFAULT_SENSITIVE_HEADERS = [
@@ -17,10 +21,24 @@ export interface OminityDebugFetcherOptions {
   readonly enabled?: boolean;
   readonly bodyPreviewLimit?: number;
   readonly sensitiveHeaders?: ReadonlyArray<string>;
+  readonly requestContext?: OminityDebugRequestContext
+    | ((request: Request) => OminityDebugRequestContext | undefined | Promise<OminityDebugRequestContext | undefined>);
 }
 
 export interface OminityDebugHttpClientOptions extends OminityDebugFetcherOptions {
   readonly cache?: boolean;
+}
+
+export interface CreateOminityDebugRequestContextInput {
+  readonly request?: Request;
+  readonly id?: string;
+  readonly pageId?: string;
+  readonly parentId?: string;
+  readonly kind?: OminityDebugRequestKind;
+  readonly label?: string;
+  readonly route?: string;
+  readonly startedAt?: string;
+  readonly details?: Readonly<Record<string, unknown>>;
 }
 
 const fetcherCache = new Map<string, Fetcher>();
@@ -41,6 +59,45 @@ function randomId(): string {
   }
 
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function pathFromUrl(url: string | undefined): string | undefined {
+  if (!url) {
+    return undefined;
+  }
+
+  try {
+    const parsed = new URL(url);
+    return `${parsed.pathname}${parsed.search}`;
+  } catch {
+    return url;
+  }
+}
+
+export function createOminityDebugRequestContext(
+  input: CreateOminityDebugRequestContextInput = {},
+): OminityDebugRequestContext {
+  const url = input.request?.url;
+  const method = input.request?.method;
+  const path = pathFromUrl(url);
+
+  return {
+    id: input.id ?? randomId(),
+    ...(input.pageId ? { pageId: input.pageId } : {}),
+    ...(input.parentId ? { parentId: input.parentId } : {}),
+    kind: input.kind ?? "route",
+    label: input.label
+      ?? input.route
+      ?? (method && path ? `${method.toUpperCase()} ${path}` : undefined)
+      ?? path
+      ?? "Ominity request",
+    ...(method ? { method: method.toUpperCase() } : {}),
+    ...(url ? { url } : {}),
+    ...(path ? { path } : {}),
+    ...(input.route ? { route: input.route } : {}),
+    startedAt: input.startedAt ?? new Date().toISOString(),
+    ...(input.details ? { details: input.details } : {}),
+  };
 }
 
 function sanitizeHeaderValue(
@@ -135,6 +192,21 @@ function asRequest(input: RequestInfo | URL, init?: RequestInit): Request {
   return new Request(input, init);
 }
 
+async function resolveRequestContext(
+  option: OminityDebugFetcherOptions["requestContext"],
+  request: Request,
+): Promise<OminityDebugRequestContext | undefined> {
+  if (!option) {
+    return undefined;
+  }
+
+  if (typeof option === "function") {
+    return option(request);
+  }
+
+  return option;
+}
+
 export function createOminityDebugFetcher(options: OminityDebugFetcherOptions): Fetcher | undefined {
   if (options.enabled === false) {
     return undefined;
@@ -156,6 +228,7 @@ export function createOminityDebugFetcher(options: OminityDebugFetcherOptions): 
     const id = randomId();
     const requestHeaders = headersToRecord(request.headers, sensitiveHeaders);
     const requestBody = await readRequestBody(request.clone(), bodyPreviewLimit);
+    const requestContext = await resolveRequestContext(options.requestContext, request);
     const path = (() => {
       try {
         const parsed = new URL(request.url);
@@ -172,6 +245,7 @@ export function createOminityDebugFetcher(options: OminityDebugFetcherOptions): 
       appendOminityDebugEntry({
         id,
         source,
+        ...(requestContext ? { request: requestContext } : {}),
         startedAt,
         durationMs,
         method: request.method.toUpperCase(),
@@ -193,6 +267,7 @@ export function createOminityDebugFetcher(options: OminityDebugFetcherOptions): 
       appendOminityDebugEntry({
         id,
         source,
+        ...(requestContext ? { request: requestContext } : {}),
         startedAt,
         durationMs: Date.now() - started,
         method: request.method.toUpperCase(),
@@ -212,6 +287,10 @@ export function createOminityDebugFetcher(options: OminityDebugFetcherOptions): 
 export function getCachedOminityDebugFetcher(options: OminityDebugFetcherOptions): Fetcher | undefined {
   if (options.enabled === false) {
     return undefined;
+  }
+
+  if (options.requestContext) {
+    return createOminityDebugFetcher(options);
   }
 
   const key = cacheKey(options);
@@ -245,6 +324,10 @@ export function getCachedOminityDebugHttpClient(
 ): HTTPClient | undefined {
   if (options.enabled === false) {
     return undefined;
+  }
+
+  if (options.requestContext) {
+    return createOminityDebugHttpClient(options);
   }
 
   const key = cacheKey(options);

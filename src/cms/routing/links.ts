@@ -4,9 +4,10 @@ import type { CmsRoutingConfig } from "./config.js";
 import { localePrefixSegments } from "./config.js";
 
 export interface CmsRouteObject {
-  readonly resource: "route";
+  /** SDK route resources are accepted unchanged. */
+  readonly resource: string;
   readonly name: string;
-  readonly locale?: string;
+  readonly locale?: string | null;
   readonly parameters: Readonly<Record<string, unknown>>;
 }
 

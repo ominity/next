@@ -6,157 +6,68 @@ import {
   useMemo,
   useState,
   type ChangeEvent,
-  type CSSProperties,
 } from "react";
 
-import type { OminityDebugEntry, OminityDebugListResponse, OminityDebugSource } from "./types.js";
+import {
+  entryMatchesRequestGroup,
+  entryMatchesSearch,
+  entryMatchesStatus,
+  requestStats,
+  type RequestGroupSelection,
+  type RequestStatusFilter,
+} from "./request-utils.js";
+import { AuthTab } from "./tabs/AuthTab.js";
+import { ChannelTab } from "./tabs/ChannelTab.js";
+import { GeneralTab } from "./tabs/GeneralTab.js";
+import {
+  CacheTab,
+  CommerceTab,
+  FormsTab,
+  HealthTab,
+  RenderingTab,
+  TrackingTab,
+} from "./tabs/ObservabilityTabs.js";
+import { RequestsTab } from "./tabs/RequestsTab.js";
+import { ToolsTab, type OminityDebugSnapshotInput } from "./tabs/ToolsTab.js";
+import type {
+  OminityDebugAuthInfo,
+  OminityDebugCacheInfo,
+  OminityDebugChannelInfo,
+  OminityDebugCommerceInfo,
+  OminityDebugConfigHealthInfo,
+  OminityDebugCustomerInfo,
+  OminityDebugEntry,
+  OminityDebugFormsInfo,
+  OminityDebugIntegrationInfo,
+  OminityDebugListResponse,
+  OminityDebugRenderingInfo,
+  OminityDebugRequestGroup,
+  OminityDebugSource,
+  OminityDebugTheme,
+  OminityDebugTrackingInfo,
+  OminityDebugUtilitiesInfo,
+} from "./types.js";
+import {
+  BODY_FONT,
+  buttonStyle,
+  inputStyle,
+  pillStyle,
+  resolvePalette,
+  useSystemDarkMode,
+} from "./ui.js";
 
-const cardStyle: CSSProperties = {
-  border: "1px solid rgb(212 212 216 / 60%)",
-  borderRadius: "10px",
-  backgroundColor: "rgb(255 255 255 / 95%)",
-  color: "rgb(24 24 27)",
-  boxShadow: "0 20px 25px -5px rgb(0 0 0 / 15%), 0 8px 10px -6px rgb(0 0 0 / 15%)",
-  backdropFilter: "blur(6px)",
-};
-
-const codeBlockStyle: CSSProperties = {
-  marginTop: "6px",
-  overflow: "auto",
-  whiteSpace: "pre-wrap",
-  borderRadius: "6px",
-  padding: "8px",
-  border: "1px solid rgb(212 212 216 / 65%)",
-  backgroundColor: "rgb(250 250 250)",
-};
-
-function prettyJsonOrRaw(input: string): string {
-  try {
-    return JSON.stringify(JSON.parse(input), null, 2);
-  } catch {
-    return input;
-  }
-}
-
-function nextNonWhitespaceChar(input: string, fromIndex: number): string | null {
-  for (let index = fromIndex; index < input.length; index += 1) {
-    const character = input[index];
-    if (typeof character === "string" && character.trim().length > 0) {
-      return character;
-    }
-  }
-
-  return null;
-}
-
-function jsonTokenStyle(token: string, source: string, tokenEndIndex: number): CSSProperties {
-  if (token.startsWith("\"")) {
-    return nextNonWhitespaceChar(source, tokenEndIndex) === ":"
-      ? { color: "rgb(3 105 161)" }
-      : { color: "rgb(21 128 61)" };
-  }
-
-  if (token === "true" || token === "false") {
-    return { color: "rgb(109 40 217)" };
-  }
-
-  if (token === "null") {
-    return { color: "rgb(113 113 122)" };
-  }
-
-  return { color: "rgb(180 83 9)" };
-}
-
-function renderHighlightedJson(input: string) {
-  const tokenPattern = /"(?:\\u[a-fA-F0-9]{4}|\\[^u]|[^\\"])*"|\btrue\b|\bfalse\b|\bnull\b|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/g;
-  const result = [];
-  let cursor = 0;
-  let tokenIndex = 0;
-
-  for (const match of input.matchAll(tokenPattern)) {
-    const text = match[0];
-    const start = match.index ?? 0;
-
-    if (start > cursor) {
-      result.push(<span key={`plain-${tokenIndex}`}>{input.slice(cursor, start)}</span>);
-      tokenIndex += 1;
-    }
-
-    const end = start + text.length;
-    result.push(
-      <span key={`token-${tokenIndex}`} style={jsonTokenStyle(text, input, end)}>
-        {text}
-      </span>,
-    );
-    tokenIndex += 1;
-    cursor = end;
-  }
-
-  if (cursor < input.length) {
-    result.push(<span key={`plain-${tokenIndex}`}>{input.slice(cursor)}</span>);
-  }
-
-  return result;
-}
-
-function renderCodeBlock(input: string) {
-  const display = prettyJsonOrRaw(input);
-  return <pre style={codeBlockStyle}>{renderHighlightedJson(display)}</pre>;
-}
-
-function shortUrl(url: string): string {
-  try {
-    const parsed = new URL(url);
-    return `${parsed.pathname}${parsed.search}`;
-  } catch {
-    return url;
-  }
-}
-
-function statusColor(entry: OminityDebugEntry): string {
-  if (!entry.ok) {
-    return "rgb(220 38 38)";
-  }
-
-  if (typeof entry.status !== "number") {
-    return "rgb(113 113 122)";
-  }
-
-  if (entry.status >= 500) {
-    return "rgb(220 38 38)";
-  }
-
-  if (entry.status >= 400) {
-    return "rgb(217 119 6)";
-  }
-
-  if (entry.status >= 300) {
-    return "rgb(37 99 235)";
-  }
-
-  return "rgb(22 163 74)";
-}
-
-function entryMatchesSearch(entry: OminityDebugEntry, searchQuery: string): boolean {
-  if (searchQuery.length === 0) {
-    return true;
-  }
-
-  const haystack = [
-    entry.source,
-    entry.method,
-    entry.url,
-    entry.path,
-    typeof entry.status === "number" ? String(entry.status) : "",
-    entry.error ?? "",
-    entry.requestBody ?? "",
-    entry.responseBody ?? "",
-    JSON.stringify(entry.requestHeaders),
-    JSON.stringify(entry.responseHeaders ?? {}),
-  ].join("\n").toLowerCase();
-
-  return haystack.includes(searchQuery);
-}
+export type OminityDebugBarTab =
+  | "general"
+  | "health"
+  | "channel"
+  | "rendering"
+  | "cache"
+  | "auth"
+  | "commerce"
+  | "forms"
+  | "tracking"
+  | "requests"
+  | "tools";
 
 export interface OminityDebugBarProps {
   readonly enabled: boolean;
@@ -167,29 +78,57 @@ export interface OminityDebugBarProps {
   readonly pollWhenOpenMs?: number;
   readonly pollWhenClosedMs?: number;
   readonly zIndex?: number;
+  readonly initialOpen?: boolean;
+  readonly initialTab?: OminityDebugBarTab;
+  readonly theme?: OminityDebugTheme;
+  readonly integration?: OminityDebugIntegrationInfo;
+  readonly health?: OminityDebugConfigHealthInfo;
+  readonly channel?: OminityDebugChannelInfo;
+  readonly rendering?: OminityDebugRenderingInfo;
+  readonly cache?: OminityDebugCacheInfo;
+  readonly auth?: OminityDebugAuthInfo | false;
+  readonly customer?: OminityDebugCustomerInfo | false;
+  readonly commerce?: OminityDebugCommerceInfo;
+  readonly forms?: OminityDebugFormsInfo;
+  readonly tracking?: OminityDebugTrackingInfo;
+  readonly utilities?: OminityDebugUtilitiesInfo;
 }
 
 export function OminityDebugBar(props: OminityDebugBarProps) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(props.initialOpen ?? false);
+  const [activeTab, setActiveTab] = useState<OminityDebugBarTab>(props.initialTab ?? "general");
+  const [theme, setTheme] = useState<OminityDebugTheme>(props.theme ?? "system");
   const [entries, setEntries] = useState<ReadonlyArray<OminityDebugEntry>>([]);
+  const [requestGroups, setRequestGroups] = useState<ReadonlyArray<OminityDebugRequestGroup>>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
-  const [errorsOnly, setErrorsOnly] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [selectedRequestId, setSelectedRequestId] = useState<RequestGroupSelection>("latest");
+  const [sourceFilter, setSourceFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState<RequestStatusFilter>("all");
   const [lastError, setLastError] = useState<string | null>(null);
+  const [liveUpdatesPaused, setLiveUpdatesPaused] = useState(false);
+  const systemDark = useSystemDarkMode();
+  const palette = resolvePalette(theme, systemDark);
 
   const endpoint = props.endpoint ?? "/api/debug/sdk-requests";
-  const title = props.title ?? "API Debug";
+  const title = props.title ?? "Ominity Debug";
   const source = props.source ?? "all";
   const limit = Number.isFinite(props.limit) && (props.limit ?? 0) > 0
     ? Math.floor(props.limit!)
-    : 140;
+    : 180;
   const pollWhenOpenMs = Number.isFinite(props.pollWhenOpenMs) && (props.pollWhenOpenMs ?? 0) > 0
     ? Math.floor(props.pollWhenOpenMs!)
     : 1500;
   const pollWhenClosedMs = Number.isFinite(props.pollWhenClosedMs) && (props.pollWhenClosedMs ?? 0) > 0
     ? Math.floor(props.pollWhenClosedMs!)
     : 3500;
+
+  useEffect(() => {
+    if (props.theme) {
+      setTheme(props.theme);
+    }
+  }, [props.theme]);
 
   const fetchEntries = useCallback(async () => {
     if (!props.enabled) {
@@ -214,6 +153,7 @@ export function OminityDebugBar(props: OminityDebugBarProps) {
 
       const payload = await response.json() as OminityDebugListResponse;
       setEntries(Array.isArray(payload.entries) ? payload.entries : []);
+      setRequestGroups(Array.isArray(payload.requestGroups) ? payload.requestGroups : []);
       setTotal(typeof payload.total === "number" ? payload.total : 0);
       setLastError(null);
     } catch (error) {
@@ -224,7 +164,7 @@ export function OminityDebugBar(props: OminityDebugBarProps) {
   }, [endpoint, limit, props.enabled, source]);
 
   useEffect(() => {
-    if (!props.enabled) {
+    if (!props.enabled || liveUpdatesPaused) {
       return;
     }
 
@@ -236,31 +176,93 @@ export function OminityDebugBar(props: OminityDebugBarProps) {
     return () => {
       window.clearInterval(interval);
     };
-  }, [fetchEntries, open, pollWhenClosedMs, pollWhenOpenMs, props.enabled]);
+  }, [fetchEntries, liveUpdatesPaused, open, pollWhenClosedMs, pollWhenOpenMs, props.enabled]);
 
   const clearEntries = useCallback(async () => {
     try {
       await fetch(endpoint, {
         method: "DELETE",
       });
-    } catch {}
+    } catch {
+      // The next fetch surfaces endpoint availability; clearing is best effort.
+    }
 
     await fetchEntries();
   }, [endpoint, fetchEntries]);
 
+  const sources = useMemo(() => Array.from(new Set(entries.map((entry) => entry.source))).sort(), [entries]);
+
   const visibleEntries = useMemo(() => {
     const normalizedSearch = searchQuery.trim().toLowerCase();
     return entries
-      .filter((entry) => !errorsOnly || !entry.ok || (typeof entry.status === "number" && entry.status >= 400))
+      .filter((entry) => entryMatchesRequestGroup(entry, selectedRequestId, requestGroups))
+      .filter((entry) => sourceFilter === "all" || entry.source === sourceFilter)
+      .filter((entry) => entryMatchesStatus(entry, statusFilter))
       .filter((entry) => entryMatchesSearch(entry, normalizedSearch));
-  }, [entries, errorsOnly, searchQuery]);
+  }, [entries, requestGroups, searchQuery, selectedRequestId, sourceFilter, statusFilter]);
+
+  const stats = useMemo(() => requestStats(entries, visibleEntries.length), [entries, visibleEntries.length]);
+
+  const snapshot = useMemo<OminityDebugSnapshotInput>(() => ({
+    generatedAt: new Date().toISOString(),
+    ...(props.integration ? { integration: props.integration } : {}),
+    ...(props.health ? { health: props.health } : {}),
+    ...(props.channel ? { channel: props.channel } : {}),
+    ...(props.rendering ? { rendering: props.rendering } : {}),
+    ...(props.cache ? { cache: props.cache } : {}),
+    ...(typeof props.auth !== "undefined" ? { auth: props.auth } : {}),
+    ...(typeof props.customer !== "undefined" ? { customer: props.customer } : {}),
+    ...(props.commerce ? { commerce: props.commerce } : {}),
+    ...(props.forms ? { forms: props.forms } : {}),
+    ...(props.tracking ? { tracking: props.tracking } : {}),
+    ...(props.utilities ? { utilities: props.utilities } : {}),
+    requestGroups,
+    entries,
+  }), [
+    entries,
+    props.auth,
+    props.cache,
+    props.channel,
+    props.commerce,
+    props.customer,
+    props.forms,
+    props.health,
+    props.integration,
+    props.rendering,
+    props.tracking,
+    props.utilities,
+    requestGroups,
+  ]);
 
   if (!props.enabled) {
     return null;
   }
 
+  const tabItems: ReadonlyArray<{ readonly key: OminityDebugBarTab; readonly label: string; readonly count?: number }> = [
+    { key: "general", label: "General" },
+    { key: "health", label: "Health" },
+    { key: "channel", label: "Channel" },
+    { key: "rendering", label: "Rendering" },
+    { key: "cache", label: "Cache" },
+    { key: "auth", label: "Auth" },
+    { key: "commerce", label: "Commerce" },
+    { key: "forms", label: "Forms" },
+    { key: "tracking", label: "Tracking" },
+    { key: "requests", label: "Requests", count: visibleEntries.length },
+    { key: "tools", label: "Tools" },
+  ];
+
   return (
-    <div style={{ position: "fixed", bottom: "12px", right: "12px", zIndex: props.zIndex ?? 70, width: "min(96vw,64rem)" }}>
+    <div
+      style={{
+        position: "fixed",
+        bottom: "12px",
+        right: "12px",
+        zIndex: props.zIndex ?? 70,
+        width: open ? "min(96vw, 74rem)" : "auto",
+        fontFamily: BODY_FONT,
+      }}
+    >
       {!open ? (
         <button
           type="button"
@@ -270,139 +272,118 @@ export function OminityDebugBar(props: OminityDebugBarProps) {
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            gap: "6px",
-            border: "1px solid rgb(212 212 216 / 80%)",
+            gap: "7px",
+            border: `1px solid ${palette.border}`,
             borderRadius: "8px",
-            backgroundColor: "rgb(244 244 245)",
-            color: "rgb(39 39 42)",
-            height: "36px",
+            backgroundColor: palette.panel,
+            color: palette.text,
+            height: "38px",
             padding: "0 12px",
             fontSize: "12px",
+            fontWeight: 700,
             cursor: "pointer",
+            boxShadow: palette.shadow,
+            backdropFilter: "blur(8px)",
           }}
         >
-          {title} ({total})
+          <span>{title}</span>
+          <span style={pillStyle(palette, stats.errors > 0 ? "danger" : "default")}>{total}</span>
         </button>
       ) : (
-        <div style={cardStyle}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: "1px solid rgb(212 212 216 / 80%)", padding: "8px 10px" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "13px", fontWeight: 600 }}>
-              {title}
-              <span style={{ borderRadius: "5px", backgroundColor: "rgb(244 244 245)", color: "rgb(82 82 91)", padding: "2px 6px", fontSize: "11px" }}>
-                {visibleEntries.length}/{total}
+        <div
+          style={{
+            border: `1px solid ${palette.border}`,
+            borderRadius: "8px",
+            backgroundColor: palette.panel,
+            color: palette.text,
+            boxShadow: palette.shadow,
+            backdropFilter: "blur(8px)",
+            overflow: "hidden",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: `1px solid ${palette.border}`, padding: "9px 10px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", minWidth: 0 }}>
+              <div style={{ fontSize: "13px", fontWeight: 800, color: palette.text, whiteSpace: "nowrap" }}>{title}</div>
+              <span style={pillStyle(palette, stats.errors > 0 ? "danger" : "success")}>
+                {stats.errors} errors
               </span>
+              <span style={pillStyle(palette)}>{stats.total} calls</span>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-              <button
-                type="button"
-                onClick={() => setErrorsOnly((value) => !value)}
-                style={{
-                  border: "1px solid rgb(212 212 216 / 80%)",
-                  borderRadius: "7px",
-                  backgroundColor: errorsOnly ? "rgb(24 24 27)" : "white",
-                  color: errorsOnly ? "white" : "rgb(39 39 42)",
-                  fontSize: "11px",
-                  padding: "4px 8px",
-                  cursor: "pointer",
-                }}
-              >
-                Errors
-              </button>
-              <button type="button" onClick={() => { void fetchEntries(); }} style={{ border: "1px solid rgb(212 212 216 / 80%)", borderRadius: "7px", backgroundColor: "white", fontSize: "11px", padding: "4px 8px", cursor: "pointer" }}>
+              <select value={theme} onChange={(event: ChangeEvent<HTMLSelectElement>) => setTheme((event.currentTarget.value ?? "system") as OminityDebugTheme)} style={{ ...inputStyle(palette), height: "30px", fontSize: "11px" }}>
+                <option value="system">System</option>
+                <option value="light">Light</option>
+                <option value="dark">Dark</option>
+              </select>
+              <button type="button" onClick={() => { void fetchEntries(); }} style={buttonStyle(palette)}>
                 {loading ? "Refreshing..." : "Refresh"}
               </button>
-              <button type="button" onClick={() => { void clearEntries(); }} style={{ border: "1px solid rgb(212 212 216 / 80%)", borderRadius: "7px", backgroundColor: "white", fontSize: "11px", padding: "4px 8px", cursor: "pointer" }}>
-                Clear
-              </button>
-              <button type="button" onClick={() => setOpen(false)} style={{ border: "1px solid rgb(212 212 216 / 80%)", borderRadius: "7px", backgroundColor: "white", fontSize: "11px", padding: "4px 8px", cursor: "pointer" }}>
+              <button type="button" onClick={() => setOpen(false)} style={buttonStyle(palette)}>
                 Close
               </button>
             </div>
           </div>
 
-          {lastError && (
-            <div style={{ borderBottom: "1px solid rgb(212 212 216 / 80%)", padding: "8px 10px", fontSize: "12px", color: "rgb(220 38 38)" }}>{lastError}</div>
-          )}
-
-          <div style={{ display: "flex", alignItems: "center", gap: "8px", borderBottom: "1px solid rgb(212 212 216 / 80%)", padding: "8px 10px" }}>
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(event: ChangeEvent<HTMLInputElement>) => setSearchQuery(event.currentTarget.value)}
-              placeholder="Search method, path, status, body..."
-              style={{
-                border: "1px solid rgb(212 212 216 / 80%)",
-                borderRadius: "7px",
-                height: "32px",
-                width: "100%",
-                padding: "0 10px",
-                fontSize: "12px",
-              }}
-            />
-            {searchQuery.length > 0 && (
-              <button type="button" onClick={() => setSearchQuery("")} style={{ border: "1px solid rgb(212 212 216 / 80%)", borderRadius: "7px", backgroundColor: "white", fontSize: "11px", padding: "4px 8px", cursor: "pointer" }}>
-                Reset
+          <div style={{ display: "flex", gap: "4px", borderBottom: `1px solid ${palette.border}`, padding: "7px 8px", backgroundColor: palette.panelMuted, overflowX: "auto" }}>
+            {tabItems.map((tab) => (
+              <button
+                key={tab.key}
+                type="button"
+                onClick={() => setActiveTab(tab.key)}
+                style={buttonStyle(palette, activeTab === tab.key)}
+              >
+                {tab.label}{typeof tab.count === "number" ? ` ${tab.count}` : ""}
               </button>
-            )}
+            ))}
           </div>
 
-          <div style={{ maxHeight: "58vh", overflow: "auto" }}>
-            {visibleEntries.length === 0 ? (
-              <div style={{ padding: "12px 10px", fontSize: "12px", color: "rgb(113 113 122)" }}>
-                {entries.length === 0 ? "No API requests captured yet." : "No entries match the current filters."}
-              </div>
-            ) : (
-              visibleEntries.map((entry) => (
-                <details key={entry.id} style={{ borderBottom: "1px solid rgb(228 228 231)", padding: "8px 10px", fontSize: "12px" }}>
-                  <summary style={{ display: "flex", cursor: "pointer", listStyle: "none", alignItems: "center", gap: "8px" }}>
-                    <span style={{ borderRadius: "5px", backgroundColor: "rgb(244 244 245)", padding: "2px 6px", fontSize: "10px", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }}>
-                      {entry.source}
-                    </span>
-                    <span style={{ borderRadius: "5px", backgroundColor: "rgb(244 244 245)", padding: "2px 6px", fontSize: "10px", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }}>
-                      {entry.method}
-                    </span>
-                    <span style={{ minWidth: 0, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }}>
-                      {shortUrl(entry.path)}
-                    </span>
-                    <span style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", color: statusColor(entry) }}>
-                      {entry.status ?? "ERR"}
-                    </span>
-                    <span style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", color: "rgb(113 113 122)" }}>{entry.durationMs}ms</span>
-                  </summary>
-
-                  <div style={{ marginTop: "8px", display: "grid", gap: "8px", paddingBottom: "4px", fontSize: "11px" }}>
-                    <div style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", color: "rgb(113 113 122)" }}>{entry.startedAt}</div>
-                    <div style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", overflowWrap: "anywhere" }}>{entry.url}</div>
-                    {entry.error && (
-                      <div style={{ borderRadius: "6px", backgroundColor: "rgb(254 242 242)", border: "1px solid rgb(252 165 165)", color: "rgb(153 27 27)", padding: "8px" }}>
-                        {entry.error}
-                      </div>
-                    )}
-                    <details style={{ borderRadius: "6px", border: "1px solid rgb(212 212 216 / 80%)", backgroundColor: "rgb(250 250 250)", padding: "8px" }}>
-                      <summary style={{ cursor: "pointer" }}>Request Headers</summary>
-                      {renderCodeBlock(JSON.stringify(entry.requestHeaders, null, 2))}
-                    </details>
-                    {entry.requestBody && (
-                      <details style={{ borderRadius: "6px", border: "1px solid rgb(212 212 216 / 80%)", backgroundColor: "rgb(250 250 250)", padding: "8px" }}>
-                        <summary style={{ cursor: "pointer" }}>Request Body</summary>
-                        {renderCodeBlock(entry.requestBody)}
-                      </details>
-                    )}
-                    {entry.responseHeaders && (
-                      <details style={{ borderRadius: "6px", border: "1px solid rgb(212 212 216 / 80%)", backgroundColor: "rgb(250 250 250)", padding: "8px" }}>
-                        <summary style={{ cursor: "pointer" }}>Response Headers</summary>
-                        {renderCodeBlock(JSON.stringify(entry.responseHeaders, null, 2))}
-                      </details>
-                    )}
-                    {entry.responseBody && (
-                      <details style={{ borderRadius: "6px", border: "1px solid rgb(212 212 216 / 80%)", backgroundColor: "rgb(250 250 250)", padding: "8px" }}>
-                        <summary style={{ cursor: "pointer" }}>Response Body</summary>
-                        {renderCodeBlock(entry.responseBody)}
-                      </details>
-                    )}
-                  </div>
-                </details>
-              ))
+          <div style={{ padding: "10px", maxHeight: "70vh", overflow: "auto" }}>
+            {activeTab === "general" && (
+              <GeneralTab
+                palette={palette}
+                integration={props.integration}
+                stats={stats}
+                endpoint={endpoint}
+                source={source}
+                limit={limit}
+                lastError={lastError}
+              />
+            )}
+            {activeTab === "health" && <HealthTab palette={palette} health={props.health} />}
+            {activeTab === "channel" && <ChannelTab palette={palette} channel={props.channel} />}
+            {activeTab === "rendering" && <RenderingTab palette={palette} rendering={props.rendering} />}
+            {activeTab === "cache" && <CacheTab palette={palette} cache={props.cache} />}
+            {activeTab === "auth" && <AuthTab palette={palette} auth={props.auth} customer={props.customer} />}
+            {activeTab === "commerce" && <CommerceTab palette={palette} commerce={props.commerce} />}
+            {activeTab === "forms" && <FormsTab palette={palette} forms={props.forms} />}
+            {activeTab === "tracking" && <TrackingTab palette={palette} tracking={props.tracking} />}
+            {activeTab === "requests" && (
+              <RequestsTab
+                palette={palette}
+                entries={entries}
+                visibleEntries={visibleEntries}
+                requestGroups={requestGroups}
+                selectedRequestId={selectedRequestId}
+                setSelectedRequestId={setSelectedRequestId}
+                sourceFilter={sourceFilter}
+                setSourceFilter={setSourceFilter}
+                statusFilter={statusFilter}
+                setStatusFilter={setStatusFilter}
+                searchQuery={searchQuery}
+                setSearchQuery={setSearchQuery}
+                sources={sources}
+                clearEntries={() => { void clearEntries(); }}
+                fetchEntries={() => { void fetchEntries(); }}
+                loading={loading}
+              />
+            )}
+            {activeTab === "tools" && (
+              <ToolsTab
+                palette={palette}
+                snapshot={snapshot}
+                liveUpdatesPaused={liveUpdatesPaused}
+                setLiveUpdatesPaused={setLiveUpdatesPaused}
+              />
             )}
           </div>
         </div>

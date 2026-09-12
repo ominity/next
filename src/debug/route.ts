@@ -2,6 +2,7 @@ import {
   clearOminityDebugEntries,
   countOminityDebugEntries,
   listOminityDebugEntries,
+  listOminityDebugRequestGroups,
 } from "./store.js";
 import type { OminityDebugSource } from "./types.js";
 
@@ -47,6 +48,7 @@ export function buildOminityDebugGetResponse(
   const source = toSource(url.searchParams.get("source"));
   const limit = toLimit(url.searchParams.get("limit"), options);
   const entries = listOminityDebugEntries(limit, source);
+  const requestGroups = listOminityDebugRequestGroups(limit, source);
 
   return Response.json({
     enabled: true,
@@ -54,6 +56,7 @@ export function buildOminityDebugGetResponse(
     limit,
     total: countOminityDebugEntries(source),
     now: new Date().toISOString(),
+    requestGroups,
     entries,
   });
 }

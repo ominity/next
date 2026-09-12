@@ -112,7 +112,7 @@ test("requestUserAccessToken uses users issue token endpoint", async () => {
       throw new Error("Expected request");
     }
 
-    assert.equal(input.method, "POST");
+    assert.equal(input.method, "GET");
     assert.equal(input.url, "https://example.ominity.test/api/v1/users/42/token");
     return new Response(JSON.stringify({
       access_token: "user-access-token",

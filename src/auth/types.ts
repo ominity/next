@@ -136,6 +136,19 @@ export interface AuthUserCustomer {
   readonly raw: unknown;
 }
 
+export interface AuthUserLogin {
+  readonly resource: "user_login";
+  readonly id: number;
+  readonly userId: number;
+  readonly ipAddress?: string;
+  readonly location?: string | null;
+  readonly device?: string | null;
+  readonly browser?: string | null;
+  readonly userAgent?: string;
+  readonly createdAt?: string;
+  readonly raw: unknown;
+}
+
 export interface AuthPaginatedResult<TItem> {
   readonly items: ReadonlyArray<TItem>;
   readonly count: number;
@@ -213,6 +226,32 @@ export interface AuthListUserCustomersInput {
   readonly requestOptions?: AuthRequestOptions;
 }
 
+export interface AuthListUserLoginsInput {
+  readonly userId: AuthUserId;
+  readonly page?: number;
+  readonly limit?: number;
+  readonly sort?: string | ReadonlyArray<string>;
+  readonly filter?: {
+    readonly id?: number;
+    readonly ipAddress?: string;
+    readonly location?: string;
+  };
+  readonly requestOptions?: AuthRequestOptions;
+}
+
+export interface AuthGetUserLoginInput {
+  readonly userId: AuthUserId;
+  readonly loginId: AuthUserId;
+  readonly requestOptions?: AuthRequestOptions;
+}
+
+export interface AuthRecordUserLoginInput {
+  readonly userId: AuthUserId;
+  readonly ipAddress: string;
+  readonly userAgent: string;
+  readonly requestOptions?: AuthRequestOptions;
+}
+
 export interface AuthListUserRecoveryCodesInput {
   readonly userId: AuthUserId;
   readonly sort?: string;
@@ -279,6 +318,9 @@ export interface AuthClient {
   listUserRecoveryCodes(input: AuthListUserRecoveryCodesInput): Promise<AuthPaginatedResult<AuthRecoveryCode>>;
   regenerateUserRecoveryCodes(input: AuthRegenerateRecoveryCodesInput): Promise<AuthPaginatedResult<AuthRecoveryCode>>;
   validateUserRecoveryCode(input: AuthValidateRecoveryCodeInput): Promise<AuthStatusResult>;
+  listUserLogins(input: AuthListUserLoginsInput): Promise<AuthPaginatedResult<AuthUserLogin>>;
+  getUserLogin(input: AuthGetUserLoginInput): Promise<AuthUserLogin>;
+  recordUserLogin(input: AuthRecordUserLoginInput): Promise<AuthUserLogin>;
   listUserOAuthAccounts(input: AuthListUserOAuthAccountsInput): Promise<AuthPaginatedResult<AuthOAuthAccount>>;
   listUserCustomers(input: AuthListUserCustomersInput): Promise<AuthPaginatedResult<AuthUserCustomer>>;
   sendPasswordResetLink(input: AuthSendPasswordResetLinkInput): Promise<AuthPasswordResetLinkResult>;

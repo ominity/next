@@ -1,5 +1,6 @@
 export * from "./types.js";
 export * from "./errors.js";
+export * from "./normalize.js";
 export * from "./client.js";
 export * from "./pages/index.js";
 export * from "./menus/index.js";

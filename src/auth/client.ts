@@ -16,6 +16,8 @@ import {
   normalizeResetPasswordResult,
   normalizeStatusResult,
   normalizeUserCustomerList,
+  normalizeUserLogin,
+  normalizeUserLoginList,
 } from "./normalize.js";
 import type {
   AuthClient,
@@ -24,9 +26,12 @@ import type {
   AuthIssueRefreshTokenInput,
   AuthIssueTokenInput,
   AuthIssueUserAccessTokenInput,
+  AuthGetUserLoginInput,
   AuthListUserCustomersInput,
+  AuthListUserLoginsInput,
   AuthListUserOAuthAccountsInput,
   AuthListUserRecoveryCodesInput,
+  AuthRecordUserLoginInput,
   AuthRegenerateRecoveryCodesInput,
   AuthRequestOptions,
   AuthResetPasswordInput,
@@ -214,13 +219,9 @@ export function createAuthClient(options: AuthClientOptions): AuthClient {
       debug.emit("debug", "Issuing user access token", { userId });
 
       try {
-        const payload = await requestJson(
-          "POST",
-          createPath("users", userId, "token"),
-          {
-            requestOptions: input.requestOptions,
-            accept: "application/json",
-          },
+        const payload = await sdk.users.issueToken(
+          { id: userId },
+          input.requestOptions,
         );
         return normalizeOAuthTokenResponse(payload);
       } catch (error) {
@@ -507,6 +508,81 @@ export function createAuthClient(options: AuthClientOptions): AuthClient {
         return normalizeStatusResult(payload);
       } catch (error) {
         rethrowAuthClientError("Failed to validate user recovery code.", error, {
+          userId,
+        });
+      }
+    },
+
+    async listUserLogins(input: AuthListUserLoginsInput) {
+      const userId = normalizeAuthUserId(input.userId);
+      debug.emit("debug", "Listing user login activity", { userId });
+
+      try {
+        const payload = await sdk.users.logins.list({
+          userId,
+          ...(typeof input.page === "number" ? { page: input.page } : {}),
+          ...(typeof input.limit === "number" ? { limit: input.limit } : {}),
+          ...(typeof input.sort === "string"
+            ? { sort: input.sort }
+            : Array.isArray(input.sort)
+              ? { sort: [...input.sort] }
+              : {}),
+          ...(input.filter
+            ? {
+              filter: {
+                ...(typeof input.filter.id === "number" ? { id: input.filter.id } : {}),
+                ...(typeof input.filter.ipAddress === "string"
+                  ? { ip_address: input.filter.ipAddress }
+                  : {}),
+                ...(typeof input.filter.location === "string"
+                  ? { location: input.filter.location }
+                  : {}),
+              },
+            }
+            : {}),
+        }, input.requestOptions);
+        return normalizeUserLoginList(payload);
+      } catch (error) {
+        rethrowAuthClientError("Failed to list user login activity.", error, {
+          userId,
+        });
+      }
+    },
+
+    async getUserLogin(input: AuthGetUserLoginInput) {
+      const userId = normalizeAuthUserId(input.userId);
+      const loginId = normalizeAuthUserId(input.loginId, "loginId");
+      debug.emit("debug", "Getting user login activity", { userId, loginId });
+
+      try {
+        return normalizeUserLogin(await sdk.users.logins.get({
+          userId,
+          loginId,
+        }, input.requestOptions));
+      } catch (error) {
+        rethrowAuthClientError("Failed to get user login activity.", error, {
+          userId,
+          loginId,
+        });
+      }
+    },
+
+    async recordUserLogin(input: AuthRecordUserLoginInput) {
+      const userId = normalizeAuthUserId(input.userId);
+      const ipAddress = ensureNonEmptyString(input.ipAddress, "ipAddress");
+      const userAgent = ensureNonEmptyString(input.userAgent, "userAgent");
+      debug.emit("debug", "Recording user login activity", { userId });
+
+      try {
+        return normalizeUserLogin(await sdk.users.logins.create({
+          userId,
+          body: {
+            ipAddress,
+            userAgent,
+          },
+        }, input.requestOptions));
+      } catch (error) {
+        rethrowAuthClientError("Failed to record user login activity.", error, {
           userId,
         });
       }

@@ -239,3 +239,103 @@ test("createAuthClient normalizes MFA, recovery, oauth accounts, customers and p
     globalThis.fetch = originalFetch;
   }
 });
+
+test("createAuthClient records, lists and retrieves user login activity", async () => {
+  const originalFetch = globalThis.fetch;
+  const requests = [];
+  globalThis.fetch = async (input) => {
+    if (!(input instanceof Request)) {
+      throw new Error("Expected request object");
+    }
+
+    requests.push(input.clone());
+    const url = new URL(input.url);
+    const activity = {
+      resource: "user_login",
+      id: input.method === "POST" ? 43 : 42,
+      userId: 7,
+      ipAddress: "203.0.113.10",
+      location: "Brussels, Belgium",
+      device: "macOS",
+      browser: "Chrome",
+      userAgent: "Browser UA",
+      createdAt: "2026-09-12T10:00:00.000Z",
+    };
+
+    if (url.pathname === "/api/v1/users/7/logins" && input.method === "GET") {
+      assert.equal(url.searchParams.get("page"), "2");
+      assert.equal(url.searchParams.get("limit"), "10");
+      assert.equal(url.searchParams.get("sort"), "-created_at");
+      assert.equal(url.searchParams.get("filter[ip_address]"), "203.0.113.10");
+      return new Response(JSON.stringify({
+        _embedded: { user_logins: [activity] },
+        count: 21,
+        _links: {
+          self: {
+            href: "https://example.ominity.test/api/v1/users/7/logins?page=2&limit=10",
+          },
+          next: {
+            href: "https://example.ominity.test/api/v1/users/7/logins?page=3&limit=10",
+          },
+        },
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/hal+json" },
+      });
+    }
+
+    if (url.pathname === "/api/v1/users/7/logins/42" && input.method === "GET") {
+      return new Response(JSON.stringify(activity), {
+        status: 200,
+        headers: { "Content-Type": "application/hal+json" },
+      });
+    }
+
+    if (url.pathname === "/api/v1/users/7/logins" && input.method === "POST") {
+      assert.deepEqual(await parseRequestBody(input), {
+        ipAddress: "203.0.113.10",
+        userAgent: "Browser UA",
+      });
+      return new Response(JSON.stringify(activity), {
+        status: 201,
+        headers: { "Content-Type": "application/hal+json" },
+      });
+    }
+
+    throw new Error(`Unhandled request: ${input.method} ${input.url}`);
+  };
+
+  try {
+    const client = createAuthClient({
+      sdk: {
+        serverURL: "https://example.ominity.test/api",
+        security: { oAuth: "user-access-token" },
+      },
+    });
+
+    const page = await client.listUserLogins({
+      userId: 7,
+      page: 2,
+      limit: 10,
+      sort: "-created_at",
+      filter: { ipAddress: "203.0.113.10" },
+    });
+    assert.equal(page.items[0].id, 42);
+    assert.equal(page.page, 2);
+    assert.equal(page.limit, 10);
+    assert.equal(page.hasNext, true);
+
+    const item = await client.getUserLogin({ userId: 7, loginId: 42 });
+    assert.equal(item.browser, "Chrome");
+
+    const recorded = await client.recordUserLogin({
+      userId: 7,
+      ipAddress: "203.0.113.10",
+      userAgent: "Browser UA",
+    });
+    assert.equal(recorded.id, 43);
+    assert.equal(requests.length, 3);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

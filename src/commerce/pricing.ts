@@ -1,3 +1,5 @@
+import type { ProductOffer } from "@ominity/api-typescript/models/commerce/product-offer";
+
 import type { CommerceAmount } from "./types.js";
 
 type UnknownRecord = Record<string, unknown>;
@@ -106,4 +108,26 @@ export function resolvePriceFromPriceMap(
   }
 
   return null;
+}
+
+export interface ResolveCommerceProductPriceInput {
+  readonly offers: ReadonlyArray<ProductOffer>;
+  readonly preferredCurrency?: string;
+  readonly allowedCurrencies?: ReadonlyArray<string>;
+}
+
+/** Selects an amount already returned by the backend; it never calculates one. */
+export function resolveCommerceProductPrice(
+  input: ResolveCommerceProductPriceInput,
+): CommerceAmount | null {
+  const offer = input.offers.find((entry) => entry.quantity === 1) ?? input.offers[0];
+  if (!offer) {
+    return null;
+  }
+
+  return resolvePriceFromPriceMap({
+    prices: offer.prices,
+    ...(input.preferredCurrency ? { preferredCurrency: input.preferredCurrency } : {}),
+    ...(input.allowedCurrencies ? { allowedCurrencies: input.allowedCurrencies } : {}),
+  });
 }

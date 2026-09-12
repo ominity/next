@@ -1,4 +1,7 @@
 import type {
+  Cart as CommerceCart,
+} from "@ominity/api-typescript/models/commerce/cart";
+import type {
   CartItem as CommerceCartItem,
 } from "@ominity/api-typescript/models/commerce/cart-item";
 import type {
@@ -68,6 +71,10 @@ export function commerceMoneyValue(value: unknown): number | undefined {
     ?? asNumber(record.amount)
     ?? asNumber(record.gross)
     ?? asNumber(record.price);
+}
+
+function requiredMoneyValue(value: unknown): number {
+  return commerceMoneyValue(value) ?? 0;
 }
 
 export function commerceMoneyCurrency(value: unknown): string | undefined {
@@ -149,11 +156,43 @@ export function commerceCartItemTotalPrice(item: CommerceCartItem): number {
     ?? commerceMoneyValue(record.total)
     ?? commerceMoneyValue(offer?.totalPrice)
     ?? commerceMoneyValue(offer?.totalAmount)
-    ?? commerceMoneyValue(offer?.amount)
-    ?? commerceCartItemUnitPrice(item) * commerceCartItemQuantity(item);
+    ?? 0;
 }
 
-export function commerceCartItemCurrency(item: CommerceCartItem): string {
+/**
+ * Cart summary values always come from the cart returned by Ominity. Item
+ * prices are deliberately not summed here because the backend owns pricing,
+ * discounts, shipping and tax calculations for the active channel/context.
+ */
+export function commerceCartSubtotal(cart: CommerceCart): number {
+  return requiredMoneyValue(cart.subtotalAmount);
+}
+
+export function commerceCartShipping(cart: CommerceCart): number {
+  return requiredMoneyValue(cart.shippingAmount);
+}
+
+export function commerceCartDiscount(cart: CommerceCart): number {
+  return requiredMoneyValue(cart.discountAmount);
+}
+
+export function commerceCartTax(cart: CommerceCart): number {
+  return requiredMoneyValue(cart.taxAmount);
+}
+
+export function commerceCartTotal(cart: CommerceCart): number {
+  return requiredMoneyValue(cart.totalAmount);
+}
+
+export function commerceCartCurrency(cart: CommerceCart): string {
+  return cart.currency.toUpperCase();
+}
+
+export function commerceCartCount(cart: CommerceCart): number {
+  return cart.totalQuantity;
+}
+
+export function commerceCartItemCurrency(item: CommerceCartItem): string | undefined {
   const record = cartItemRecord(item);
   const product = cartItemProduct(item);
   const offer = cartItemOffer(item);
@@ -166,10 +205,9 @@ export function commerceCartItemCurrency(item: CommerceCartItem): string {
     ?? commerceMoneyCurrency(offer?.unitAmount)
     ?? commerceMoneyCurrency(offer?.amount)
     ?? asString(record.currency)
-    ?? asString(product?.currency)
-    ?? "EUR";
+    ?? asString(product?.currency);
 
-  return currency.toUpperCase();
+  return currency?.toUpperCase();
 }
 
 export function commerceOrderId(order: CommerceOrder): string {
@@ -177,11 +215,11 @@ export function commerceOrderId(order: CommerceOrder): string {
 }
 
 export function commerceOrderTotal(order: CommerceOrder): number {
-  return commerceMoneyValue(order.totalAmount) ?? 0;
+  return requiredMoneyValue(order.totalAmount);
 }
 
 export function commerceOrderCurrency(order: CommerceOrder): string {
-  return (commerceMoneyCurrency(order.totalAmount) ?? "EUR").toUpperCase();
+  return order.totalAmount.currency.toUpperCase();
 }
 
 export function commercePaymentId(payment: CommercePayment): string {
@@ -189,9 +227,9 @@ export function commercePaymentId(payment: CommercePayment): string {
 }
 
 export function commercePaymentAmount(payment: CommercePayment): number {
-  return commerceMoneyValue(payment.amount) ?? 0;
+  return requiredMoneyValue(payment.amount);
 }
 
 export function commercePaymentCurrency(payment: CommercePayment): string {
-  return (commerceMoneyCurrency(payment.amount) ?? "EUR").toUpperCase();
+  return payment.amount.currency.toUpperCase();
 }

@@ -9,6 +9,7 @@ import {
   parseLocaleCode,
   toLocaleCode,
   type CmsCanonicalRedirectPolicy,
+  type CmsChannel,
   type CmsClient,
   type CmsGetMenusInput,
   type CmsGetPageByPathInput,
@@ -240,6 +241,7 @@ export interface OminitySiteSupport {
   getCmsMenus(input?: CmsGetMenusInput): Promise<ReadonlyArray<CmsMenu>>;
   getMainMenu(locale?: string): Promise<CmsMenu | null>;
   getChannelContext(): Promise<OminityChannelContext>;
+  getSupportedLocales(): Promise<ReadonlyArray<CmsLocale>>;
   getChannelAwareCmsRouting(): Promise<CmsRoutingConfig>;
   resolveRequestLocale(request: Request): Promise<string | undefined>;
   resolveRequestSdkLanguage(request: Request): Promise<string | undefined>;
@@ -365,6 +367,38 @@ function buildChannelContext(
     countryCurrencyMap,
     currencies,
   };
+}
+
+function localesForChannel(
+  channel: CmsChannel | null,
+  availableLocales: ReadonlyArray<CmsLocale>,
+): ReadonlyArray<CmsLocale> {
+  const activeLanguages = channel?.languages.filter((language) => language.active !== false) ?? [];
+  if (activeLanguages.length === 0) {
+    return availableLocales;
+  }
+
+  const result = activeLanguages.map((language) => {
+    const requestedCode = normalizeLocaleCode(language.localeCode ?? language.code);
+    const requestedLanguage = parseLocaleCode(requestedCode).language;
+    const matchingLocale = availableLocales.find((locale) => {
+      return normalizeLocaleCode(locale.code) === requestedCode;
+    });
+    const code = requestedCode;
+    const parsed = parseLocaleCode(code);
+    const country = language.localeTerritory ?? matchingLocale?.country ?? parsed.country;
+
+    return {
+      ...(matchingLocale ?? {}),
+      code,
+      language: parsed.language || requestedLanguage,
+      ...(country ? { country: country.toUpperCase() } : {}),
+      label: language.name,
+      ...(language.default === true ? { default: true } : {}),
+    } satisfies CmsLocale;
+  });
+
+  return Array.from(new Map(result.map((locale) => [locale.code, locale])).values());
 }
 
 function cookieValue(cookieHeader: string | null, name: string): string | undefined {
@@ -671,26 +705,30 @@ export function createOminitySiteSupport(
           client.getChannel(),
         ]);
 
-        const locales = localesResult.status === "fulfilled"
+        const availableLocales = localesResult.status === "fulfilled"
           ? localesResult.value
           : config.locales;
-        const channel = channelResult.status === "fulfilled" && channelResult.value
+        const channelResource = channelResult.status === "fulfilled"
+          ? channelResult.value
+          : null;
+        const locales = localesForChannel(channelResource, availableLocales);
+        const channel = channelResource
           ? {
-              ...(typeof channelResult.value.id === "string" ? { id: channelResult.value.id } : {}),
-              ...(typeof channelResult.value.identifier === "string"
-                ? { identifier: channelResult.value.identifier }
+              id: channelResource.id,
+              ...(typeof channelResource.identifier === "string"
+                ? { identifier: channelResource.identifier }
                 : {}),
-              ...(typeof channelResult.value.defaultLanguageCode === "string"
-                ? { defaultLanguageCode: channelResult.value.defaultLanguageCode }
+              ...(typeof channelResource.defaultLanguageCode === "string"
+                ? { defaultLanguageCode: channelResource.defaultLanguageCode }
                 : {}),
-              ...(typeof channelResult.value.defaultCountryCode === "string"
-                ? { defaultCountryCode: channelResult.value.defaultCountryCode }
+              ...(typeof channelResource.defaultCountryCode === "string"
+                ? { defaultCountryCode: channelResource.defaultCountryCode }
                 : {}),
-              ...(typeof channelResult.value.defaultCurrencyCode === "string"
-                ? { defaultCurrencyCode: channelResult.value.defaultCurrencyCode }
+              ...(typeof channelResource.defaultCurrencyCode === "string"
+                ? { defaultCurrencyCode: channelResource.defaultCurrencyCode }
                 : {}),
-              ...(channelResult.value.countries.length > 0 ? { countries: channelResult.value.countries } : {}),
-              ...(channelResult.value.currencies.length > 0 ? { currencies: channelResult.value.currencies } : {}),
+              ...(channelResource.countries.length > 0 ? { countries: channelResource.countries } : {}),
+              ...(channelResource.currencies.length > 0 ? { currencies: channelResource.currencies } : {}),
             }
           : undefined;
 
@@ -727,6 +765,10 @@ export function createOminitySiteSupport(
     })();
 
     return cachedChannelAwareRoutingPromise;
+  };
+
+  const getSupportedLocales = async (): Promise<ReadonlyArray<CmsLocale>> => {
+    return (await getChannelContext()).locales;
   };
 
   const localeFromPath = (pathname: string, routing: CmsRoutingConfig): string | undefined => {
@@ -960,6 +1002,7 @@ export function createOminitySiteSupport(
     getCmsMenus,
     getMainMenu,
     getChannelContext,
+    getSupportedLocales,
     getChannelAwareCmsRouting,
     resolveRequestLocale,
     resolveRequestSdkLanguage,

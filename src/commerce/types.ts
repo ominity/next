@@ -112,7 +112,6 @@ export interface CommerceCreateCartItemInput {
   readonly cartId: string;
   readonly productId: string;
   readonly quantity: number;
-  readonly data?: Readonly<Record<string, unknown>>;
 }
 
 export interface CommerceUpdateCartItemInput {

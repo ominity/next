@@ -32,22 +32,6 @@ import type {
 } from "./types.js";
 
 type UnknownRecord = Record<string, unknown>;
-type HookContextLike = {
-  options?: Record<string, unknown>;
-};
-type BeforeCreateRequestLike = (
-  context: HookContextLike,
-  input: unknown,
-) => unknown;
-type HooksLike = {
-  beforeCreateRequest?: BeforeCreateRequestLike;
-  __ominityContextOptionsPatched?: boolean;
-};
-type OminityWithInternals = Ominity & {
-  _options?: Record<string, unknown> & {
-    hooks?: HooksLike;
-  };
-};
 
 function asRecord(value: unknown): UnknownRecord {
   return typeof value === "object" && value !== null ? value as UnknownRecord : {};
@@ -102,44 +86,6 @@ async function withResolvedVisitorId(
   return normalizedPayload;
 }
 
-function patchHookContextOptions(sdk: Ominity): Ominity {
-  const sdkWithInternals = sdk as OminityWithInternals;
-  const hooks = sdkWithInternals._options?.hooks;
-  if (!hooks || typeof hooks.beforeCreateRequest !== "function") {
-    return sdk;
-  }
-
-  if (hooks.__ominityContextOptionsPatched === true) {
-    return sdk;
-  }
-
-  const original = hooks.beforeCreateRequest.bind(hooks) as (
-    context: HookContextLike,
-    input: unknown,
-  ) => unknown;
-  (hooks as unknown as { beforeCreateRequest: BeforeCreateRequestLike }).beforeCreateRequest = ((
-    context: HookContextLike,
-    input: unknown,
-  ) => {
-    const contextOptions = typeof context?.options === "object" && context.options !== null
-      ? context.options
-      : {};
-
-    const mergedContext: HookContextLike = {
-      ...(context ?? {}),
-      options: {
-        ...(sdkWithInternals._options ?? {}),
-        ...contextOptions,
-      },
-    };
-
-    return original(mergedContext, input);
-  }) as BeforeCreateRequestLike;
-
-  hooks.__ominityContextOptionsPatched = true;
-  return sdk;
-}
-
 function asListFromPayload<T>(
   payload: Paginated<T> | ReadonlyArray<T>,
 ): ReadonlyArray<T> {
@@ -187,19 +133,11 @@ function normalizeProductIdValue(productId: string): string | number {
 function normalizeCreateCartItemPayload(
   productId: string,
   quantity: number,
-  data: unknown,
 ): Record<string, unknown> {
-  const payload: Record<string, unknown> = {
-    ...asRecord(data),
+  return {
+    productId: normalizeProductIdValue(productId),
+    quantity,
   };
-  payload.productId = normalizeProductIdValue(productId);
-  payload.quantity = quantity;
-
-  delete payload.product_id;
-  delete payload.cartId;
-  delete payload.data;
-
-  return payload;
 }
 
 async function parseResponseBody(response: Response): Promise<unknown> {
@@ -220,7 +158,7 @@ function asTypedRecord<T>(value: unknown): T {
 }
 
 export function createCommerceClient(options: CommerceClientOptions): CommerceClient {
-  const sdk = patchHookContextOptions(new Ominity(options.sdk));
+  const sdk = new Ominity(options.sdk);
   const debug = createCommerceDebugLogger(options.debug, "commerce-client");
   const visitorIdResolver = options.visitorIdResolver;
   const visitorIdFieldName = resolveVisitorIdFieldName(options.visitorIdFieldName);
@@ -360,13 +298,12 @@ export function createCommerceClient(options: CommerceClientOptions): CommerceCl
           ? await options.adapter.createCartItem(input.cartId, {
             productId: input.productId,
             quantity,
-            ...(typeof input.data === "object" && input.data !== null ? input.data : {}),
           })
           : await (async () => {
             const response = await sdk.http.post(
               `/commerce/carts/${encodeURIComponent(input.cartId)}/items`,
               {
-                json: normalizeCreateCartItemPayload(input.productId, quantity, input.data),
+                json: normalizeCreateCartItemPayload(input.productId, quantity),
               },
             );
             return parseResponseBody(response);
