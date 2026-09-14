@@ -550,7 +550,10 @@ export function TrackingProvider(props: TrackingProviderProps) {
   const maxQueueSize = typeof props.maxQueueSize === "number" && Number.isFinite(props.maxQueueSize)
     ? Math.max(1, Math.floor(props.maxQueueSize))
     : DEFAULT_MAX_QUEUE_SIZE;
-  const scrollDepthThresholds = normalizeThresholds(props.scrollDepthThresholds);
+  const scrollDepthThresholds = useMemo(
+    () => normalizeThresholds(props.scrollDepthThresholds),
+    [props.scrollDepthThresholds],
+  );
   const queueOptions: QueueOptions = {
     endpoint,
     ...(props.headers ? { headers: props.headers } : {}),

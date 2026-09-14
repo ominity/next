@@ -53,10 +53,16 @@ export function OminityDebugProvider(props: OminityDebugProviderProps) {
       return () => undefined;
     }
 
-    setSnapshot((previous) => ({
-      ...previous,
-      [capability]: value,
-    }));
+    setSnapshot((previous) => {
+      if (previous[capability] === value) {
+        return previous;
+      }
+
+      return {
+        ...previous,
+        [capability]: value,
+      };
+    });
 
     return () => {
       setSnapshot((previous) => {
