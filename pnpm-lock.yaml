@@ -16,8 +16,8 @@ importers:
         specifier: ^9.0.0
         version: 9.39.4
       '@ominity/api-typescript':
-        specifier: ^1.4.6
-        version: 1.4.6
+        specifier: ^1.4.8
+        version: 1.4.8
       '@types/react':
         specifier: ^19.3.0
         version: 19.3.0
@@ -328,8 +328,8 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@ominity/api-typescript@1.4.6':
-    resolution: {integrity: sha512-C45GixjsiC7RMpya4pm4xkQKls2nj0Em+4FTzuXvZgX28eW6faxwcHwE7fg9pZ8nDAyTYS6QInFiL+G3KogEUg==}
+  '@ominity/api-typescript@1.4.8':
+    resolution: {integrity: sha512-vxWSj30aARaqT6LqJT9YZ/B8nI26Dp30npmtQCaJPcNrMF4QVHDm6Fu/aIrRO7r2jdemG2p0tkb4awE9Ffd5IA==}
 
   '@parcel/watcher-android-arm64@2.5.6':
     resolution: {integrity: sha512-YQxSS34tPF/6ZG7r/Ih9xy+kP/WwediEUsqmtf0cuCV5TPPKw/PQHRhueUo6JdeFJaqV3pyjm0GdYjZotbRt/A==}
@@ -1257,7 +1257,7 @@ snapshots:
   '@next/swc-win32-x64-msvc@16.2.3':
     optional: true
 
-  '@ominity/api-typescript@1.4.6':
+  '@ominity/api-typescript@1.4.8':
     dependencies:
       zod: 4.3.6
 
