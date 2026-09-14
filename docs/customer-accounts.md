@@ -44,6 +44,21 @@ The default route surface is:
 | `POST` | `/api/customer-accounts/invitations/accept` | Accept as the authenticated user |
 | `GET` | `/api/customer-accounts/roles` | List roles assignable through the channel |
 | `GET` | `/api/customer-accounts/permissions` | Load translated permission metadata |
+| `GET` | `/api/customer-accounts/customer` | Load the active customer account |
+| `PATCH` | `/api/customer-accounts/customer` | Update active customer details |
+| `GET/POST` | `/api/customer-accounts/addresses` | List or create addresses |
+| `GET/PATCH/DELETE` | `/api/customer-accounts/addresses/{id}` | Load, update, or remove an address |
+| `GET` | `/api/customer-accounts/groups[/{id}]` | List or load customer groups |
+| `GET` | `/api/customer-accounts/mandates[/{id}]` | List or load mandates |
+| `GET/POST` | `/api/customer-accounts/payments` | List or create payments |
+| `GET` | `/api/customer-accounts/payments/{id}` | Load a payment |
+| `GET/POST` | `/api/customer-accounts/orders` | List or place orders |
+| `GET` | `/api/customer-accounts/orders/{id}` | Load an order |
+| `GET` | `/api/customer-accounts/invoices[/{id}]` | List or load invoices |
+| `GET` | `/api/customer-accounts/invoices/{id}/pdf` | Download an invoice PDF |
+| `GET` | `/api/customer-accounts/subscriptions` | List subscriptions |
+| `GET/DELETE` | `/api/customer-accounts/subscriptions/{id}` | Load or cancel a subscription |
+| `GET` | `/api/customer-accounts/subscriptions/{id}/transition-products[/{productId}]` | List or load transition products |
 
 The active customer ID is stored in an HttpOnly, `SameSite=Lax` cookie. The
 cookie is only a preference: switching validates the membership through
@@ -53,6 +68,11 @@ authorized again by the backend with the user's OAuth access token.
 `basePath`, the active-customer cookie name and lifetime, the invitation page
 path, and the invitation accept URL resolver are configurable. By default,
 invitation emails link to `/account/invitations/{token}` on `siteUrl`.
+
+The route factory only exposes backend workflows that have complete behavior.
+Mandate mutation, payment deletion, order update/deletion, direct subscription
+creation, subscription pause/resume, and manual renewal remain absent until the
+corresponding backend domain operations are implemented.
 
 ## Add the headless React state
 
@@ -114,6 +134,55 @@ export function AccountSwitcher() {
 
 Switching updates the shared context, clears data belonging to the previous
 account, and triggers a fresh team load when enabled.
+
+## Load account resources
+
+`useOminityCustomerAccounts()` exposes the configured `client`. Its nested
+`customer`, `addresses`, `groups`, `mandates`, `payments`, `orders`, `invoices`,
+and `subscriptions` clients use the active account selected by the server. A
+browser never supplies a customer ID, user access token, or API key.
+
+Use `useOminityCustomerQuery` for account-bound data. It cancels superseded
+loads, reloads after an account switch, and never exposes data returned for the
+previous account. The optional permission is an early UI check; the route and
+Ominity API both authorize the request again.
+
+```tsx
+"use client";
+
+import { CUSTOMER_PERMISSIONS } from "@ominity/next/customer-accounts";
+import { useOminityCustomerQuery } from "@ominity/next/customer-accounts/react";
+
+export function Orders() {
+  const orders = useOminityCustomerQuery(
+    ({ client, signal }) => client.orders.list(
+      { page: 1, limit: 25, sort: "-created_at", include: "invoice,payments" },
+      { signal },
+    ),
+    { permission: CUSTOMER_PERMISSIONS.ordersView },
+  );
+
+  // Render orders.data, orders.loading, orders.error and orders.refresh.
+}
+```
+
+Mutations use the same typed client and accept `AbortSignal` or custom headers.
+Pass an `Idempotency-Key` for operations where the application needs retry-safe
+creation.
+
+```tsx
+const { client, can } = useOminityCustomerAccounts();
+
+if (can(CUSTOMER_PERMISSIONS.addressesManage)) {
+  await client.addresses.create(address, {
+    headers: { "Idempotency-Key": crypto.randomUUID() },
+  });
+}
+```
+
+The package re-exports the SDK's original `Customer`, `Address`, `Order`,
+`Invoice`, `Payment`, `Mandate`, `Subscription`, `Product`, and operation input
+types. It does not create prefixed copies or alternate wire models.
 
 ## Render team actions from permissions
 

@@ -31,7 +31,9 @@
    - theme + component override surfaces (shadcn-friendly)
 
 5. **Commerce/Auth utilities (`src/commerce`, `src/auth`)**
-   - commerce client wrapper around SDK operations (carts, items, shipping, payment methods, orders, payments)
+   - commerce client wrapper around SDK operations (carts, products, offers, shipping, payment methods and issuers, orders, and payments)
+   - optional catch-all App Router commerce handler with same-origin mutation checks
+   - authenticated active-customer routes for details, addresses, groups, mandates, payments, orders, invoices, and subscriptions
    - stable commerce model normalization for app-layer predictability
    - SDK-backed auth client for OAuth2, MFA, recovery codes, password reset, OAuth accounts, and user customers
    - signed auth session helpers for cookie-based server flows

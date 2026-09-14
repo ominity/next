@@ -6,6 +6,7 @@ import type { Order } from "@ominity/api-typescript/models/commerce/order";
 import type { Payment } from "@ominity/api-typescript/models/commerce/payment";
 import type { Product } from "@ominity/api-typescript/models/commerce/product";
 import type { ProductOffer } from "@ominity/api-typescript/models/commerce/product-offer";
+import type { CreateOrderPaymentRequest } from "@ominity/api-typescript/models/operations";
 import {
   createContext,
   useCallback,
@@ -16,6 +17,8 @@ import {
   type ReactNode,
 } from "react";
 
+import { useOminityDebugCapability } from "../debug/context.js";
+import type { OminityDebugCommerceInfo } from "../debug/types.js";
 import { emitCommerceEvent } from "./events.js";
 import {
   commerceCartCount,
@@ -30,6 +33,7 @@ import {
   commerceCartSubtotal,
   commerceCartTax,
   commerceCartTotal,
+  commerceMoneyValue,
   commerceOrderCurrency,
   commerceOrderId,
   commerceOrderTotal,
@@ -44,8 +48,6 @@ export interface CommerceProductSelection {
 }
 
 export type CommerceWishlistItem = CommerceProductSelection;
-export type CommerceOrder = Order;
-export type CommercePayment = Payment;
 
 export type CommerceCreateOrderInput = Partial<Pick<
   Cart,
@@ -102,6 +104,11 @@ export interface CommerceContextValue {
   createOrder(input?: CommerceCreateOrderInput): Promise<Order | null>;
   getOrderById(orderId: string): Promise<Order | null>;
   listOrderPayments(orderId: string): Promise<ReadonlyArray<Payment>>;
+  createOrderPayment(
+    orderId: string,
+    data: CreateOrderPaymentRequest["data"],
+    options?: { readonly idempotencyKey?: string },
+  ): Promise<Payment | null>;
 }
 
 interface CartSnapshotResponse {
@@ -166,12 +173,14 @@ function productEventFields(selection: CommerceProductSelection) {
     offers: selection.offers,
     ...(selection.preferredCurrency ? { preferredCurrency: selection.preferredCurrency } : {}),
   });
+  const unitPrice = commerceMoneyValue(price);
 
   return {
     productId: productId(selection),
     sku: selection.product.sku,
     title: selection.product.title,
-    ...(price ? { unitPrice: price.value, currency: price.currency } : {}),
+    ...(typeof unitPrice === "number" ? { unitPrice } : {}),
+    ...(price ? { currency: price.currency } : {}),
     ...(selection.canonicalPath ? { canonicalPath: selection.canonicalPath } : {}),
   };
 }
@@ -403,6 +412,24 @@ export function OminityCommerceProvider(props: CommerceProviderProps) {
     return payments;
   }, [endpoints]);
 
+  const createOrderPayment = useCallback(async (
+    orderId: string,
+    data: CreateOrderPaymentRequest["data"],
+    options: { readonly idempotencyKey?: string } = {},
+  ) => {
+    const response = await requestJson<{ readonly payment?: Payment }>(
+      endpoints.orderPayments(orderId),
+      {
+        method: "POST",
+        headers: options.idempotencyKey?.trim()
+          ? { "Idempotency-Key": options.idempotencyKey.trim() }
+          : {},
+        body: JSON.stringify(data),
+      },
+    );
+    return response.payment ?? null;
+  }, [endpoints]);
+
   const value = useMemo<CommerceContextValue>(() => ({
     ready,
     cartResource,
@@ -431,12 +458,51 @@ export function OminityCommerceProvider(props: CommerceProviderProps) {
     createOrder,
     getOrderById,
     listOrderPayments,
+    createOrderPayment,
   }), [
-    addToCart, applyPromotionCode, cartResource, clearCart, createOrder, getOrderById,
+    addToCart, applyPromotionCode, cartResource, clearCart, createOrder, createOrderPayment, getOrderById,
     isWishlisted, items, listOrderPayments, ready, refreshCart, removeFromCart,
     removeFromWishlist, removePromotionCode, setCartCountry, setCartQuantity,
     toggleWishlist, wishlist,
   ]);
+
+  const debugCommerce = useMemo<OminityDebugCommerceInfo>(() => ({
+    enabled: true,
+    ...(cartResource ? {
+      cartId: cartResource.id,
+      country: cartResource.country,
+      currency: commerceCartCurrency(cartResource),
+      cartItemCount: commerceCartCount(cartResource),
+      subtotal: commerceCartSubtotal(cartResource),
+      shipping: commerceCartShipping(cartResource),
+      discount: commerceCartDiscount(cartResource),
+      tax: commerceCartTax(cartResource),
+      total: commerceCartTotal(cartResource),
+    } : {}),
+    promotionCodes: cartResource?.promotionCodes ?? [],
+    products: items.map((item) => {
+      const id = commerceCartItemProductId(item);
+      const sku = commerceCartItemSku(item);
+      const name = commerceCartItemTitle(item);
+
+      return {
+        ...(id ? { id } : {}),
+        ...(sku ? { sku } : {}),
+        ...(name ? { name } : {}),
+      };
+    }),
+    details: {
+      ready,
+      endpoints,
+      wishlistCount: wishlist.length,
+      cartStatus: cartResource?.status,
+      cartType: cartResource?.type,
+      shippingMethodId: cartResource?.shippingMethodId,
+      isShippingRequired: cartResource?.isShippingRequired,
+      isTaxExempt: cartResource?.isTaxExempt,
+    },
+  }), [cartResource, endpoints, items, ready, wishlist.length]);
+  useOminityDebugCapability("commerce", debugCommerce);
 
   return <CommerceContext.Provider value={value}>{props.children}</CommerceContext.Provider>;
 }

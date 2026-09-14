@@ -1,6 +1,6 @@
 # Auth guide
 
-`@ominity/next/auth` provides a server-first auth client on top of `@ominity/api-typescript@^1.4.3`.
+`@ominity/next/auth` provides a server-first auth client on top of `@ominity/api-typescript@^1.4.5`.
 
 ## Scope
 

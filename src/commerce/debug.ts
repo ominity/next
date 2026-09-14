@@ -7,6 +7,21 @@ export interface CommerceDebugLogger {
   emit(level: CommerceClientLogLevel, message: string, payload?: unknown): void;
 }
 
+const SENSITIVE_KEYS = /^(?:authorization|cookie|set-cookie|password|secret|token|cardtoken|accesstoken|refreshtoken|clientsecret|apikey)$/i;
+
+function redactDebugValue(value: unknown, seen = new WeakSet<object>()): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => redactDebugValue(item, seen));
+  }
+  if (typeof value !== "object" || value === null) return value;
+  if (seen.has(value)) return "[circular]";
+  seen.add(value);
+  return Object.fromEntries(Object.entries(value).map(([key, entry]) => [
+    key,
+    SENSITIVE_KEYS.test(key) ? "[redacted]" : redactDebugValue(entry, seen),
+  ]));
+}
+
 export function createCommerceDebugLogger(
   options: CommerceClientDebugOptions | undefined,
   scope: string,
@@ -22,12 +37,14 @@ export function createCommerceDebugLogger(
         return;
       }
 
+      const safePayload = typeof payload === "undefined" ? undefined : redactDebugValue(payload);
+
       if (logger) {
         logger.log({
           scope: logScope,
           level,
           message,
-          ...(typeof payload !== "undefined" ? { payload } : {}),
+          ...(typeof safePayload !== "undefined" ? { payload: safePayload } : {}),
         });
         return;
       }
@@ -35,7 +52,7 @@ export function createCommerceDebugLogger(
       const record = {
         scope: logScope,
         message,
-        ...(typeof payload !== "undefined" ? { payload } : {}),
+        ...(typeof safePayload !== "undefined" ? { payload: safePayload } : {}),
       };
 
       if (level === "warn") {

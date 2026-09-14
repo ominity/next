@@ -1,12 +1,8 @@
 import type {
   CommerceClient,
 } from "../commerce/types.js";
-import type {
-  Cart as CommerceCart,
-} from "@ominity/api-typescript/models/commerce/cart";
-import type {
-  CartItem as CommerceCartItem,
-} from "@ominity/api-typescript/models/commerce/cart-item";
+import type { Cart } from "@ominity/api-typescript/models/commerce/cart";
+import type { CartItem } from "@ominity/api-typescript/models/commerce/cart-item";
 import {
   readCartIdCookie,
   writeCartIdCookie,
@@ -18,8 +14,8 @@ import {
 type UnknownRecord = Readonly<Record<string, unknown>>;
 
 export interface CommerceCartSnapshot {
-  readonly cart: CommerceCart;
-  readonly items: ReadonlyArray<CommerceCartItem>;
+  readonly cart: Cart;
+  readonly items: ReadonlyArray<CartItem>;
   readonly created: boolean;
 }
 
@@ -175,7 +171,7 @@ export async function getOrCreateCommerceCartSnapshot(
 ): Promise<CommerceCartSnapshot> {
   let created = false;
   const existingCartId = readCartIdCookie(input.cookies, input.cookieOptions);
-  let cart: CommerceCart | null = null;
+  let cart: Cart | null = null;
 
   if (typeof existingCartId === "string" && existingCartId.length > 0) {
     cart = await input.client.getCart({

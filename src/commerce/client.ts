@@ -4,27 +4,34 @@ import type { Paginated } from "@ominity/api-typescript/models";
 import { CommerceClientError } from "../cms/errors.js";
 import { createCommerceDebugLogger } from "./debug.js";
 import type {
-  CommerceCart,
-  CommerceCartItem,
   CommerceClient,
   CommerceClientOptions,
   CommerceCreateCartInput,
   CommerceCreateCartItemInput,
   CommerceCreateOrderInput,
+  CommerceCreateOrderPaymentInput,
+  CommerceCreatePaymentInput,
   CommerceDeleteCartItemInput,
   CommerceEnsureCartInput,
   CommerceGetCartInput,
   CommerceGetOrderInput,
+  CommerceGetOrderPaymentInput,
   CommerceGetPaymentInput,
+  CommerceGetPaymentMethodInput,
+  CommerceGetPaymentMethodIssuerInput,
   CommerceGetProductInput,
+  CommerceGetProductOfferInput,
+  CommerceGetShippingClassInput,
+  CommerceGetShippingMethodInput,
   CommerceListCartItemsInput,
+  CommerceListCartShippingMethodsInput,
   CommerceListCartsInput,
   CommerceListOrderPaymentsInput,
+  CommerceListPaymentMethodIssuersInput,
   CommerceListPaymentMethodsInput,
-  CommercePayment,
-  CommercePaymentMethod,
-  CommerceProduct,
-  CommerceShippingMethod,
+  CommerceListProductOffersInput,
+  CommerceListProductsInput,
+  CommerceListShippingClassesInput,
   CommerceListShippingMethodsInput,
   CommerceUpdateCartInput,
   CommerceUpdateCartItemInput,
@@ -120,41 +127,13 @@ function asPositiveQuantity(quantity: number): number {
   return normalized > 0 ? normalized : 1;
 }
 
-function normalizeProductIdValue(productId: string): string | number {
-  const trimmed = productId.trim();
-  const numericId = Number.parseInt(trimmed, 10);
-  if (Number.isFinite(numericId) && `${numericId}` === trimmed) {
-    return numericId;
+function requirePositiveInteger(value: number, name: string): number {
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new CommerceClientError(`${name} must be a positive integer.`, {
+      details: { [name]: value },
+    });
   }
-
-  return trimmed;
-}
-
-function normalizeCreateCartItemPayload(
-  productId: string,
-  quantity: number,
-): Record<string, unknown> {
-  return {
-    productId: normalizeProductIdValue(productId),
-    quantity,
-  };
-}
-
-async function parseResponseBody(response: Response): Promise<unknown> {
-  if (response.status === 204) {
-    return true;
-  }
-
-  const contentType = response.headers.get("content-type") ?? "";
-  if (contentType.toLowerCase().includes("json")) {
-    return response.json();
-  }
-
-  return response.text();
-}
-
-function asTypedRecord<T>(value: unknown): T {
-  return value as T;
+  return value;
 }
 
 export function createCommerceClient(options: CommerceClientOptions): CommerceClient {
@@ -289,6 +268,21 @@ export function createCommerceClient(options: CommerceClientOptions): CommerceCl
       }
     },
 
+    async listCartShippingMethods(input: CommerceListCartShippingMethodsInput) {
+      debug.emit("debug", "Listing cart shipping methods", input);
+      try {
+        const payload = options.adapter?.listCartShippingMethods
+          ? await options.adapter.listCartShippingMethods(input.cartId)
+          : await sdk.commerce.carts.listShippingMethods({ cartId: input.cartId });
+        return payload;
+      } catch (error) {
+        throw new CommerceClientError("Failed to list cart shipping methods.", {
+          cause: error,
+          details: { cartId: input.cartId },
+        });
+      }
+    },
+
     async createCartItem(input: CommerceCreateCartItemInput) {
       debug.emit("debug", "Creating cart item", input);
 
@@ -299,17 +293,9 @@ export function createCommerceClient(options: CommerceClientOptions): CommerceCl
             productId: input.productId,
             quantity,
           })
-          : await (async () => {
-            const response = await sdk.http.post(
-              `/commerce/carts/${encodeURIComponent(input.cartId)}/items`,
-              {
-                json: normalizeCreateCartItemPayload(input.productId, quantity),
-              },
-            );
-            return parseResponseBody(response);
-          })();
+          : await sdk.commerce.cartItems.create(input.cartId, input.productId, quantity);
 
-        return asTypedRecord<CommerceCartItem>(payload);
+        return payload;
       } catch (error) {
         throw new CommerceClientError("Failed to create cart item.", {
           cause: error,
@@ -328,17 +314,13 @@ export function createCommerceClient(options: CommerceClientOptions): CommerceCl
       try {
         const payload = options.adapter?.updateCartItem
           ? await options.adapter.updateCartItem(input.cartId, input.itemId, input.data)
-          : await (async () => {
-            const response = await sdk.http.patch(
-              `/commerce/carts/${encodeURIComponent(input.cartId)}/items/${encodeURIComponent(input.itemId)}`,
-              {
-                json: input.data as Record<string, unknown>,
-              },
-            );
-            return parseResponseBody(response);
-          })();
+          : await sdk.commerce.cartItems.update(
+            input.cartId,
+            input.itemId,
+            input.data as Record<string, any>,
+          );
 
-        return asTypedRecord<CommerceCartItem>(payload);
+        return payload;
       } catch (error) {
         throw new CommerceClientError("Failed to update cart item.", {
           cause: error,
@@ -367,6 +349,21 @@ export function createCommerceClient(options: CommerceClientOptions): CommerceCl
             itemId: input.itemId,
           },
         });
+      }
+    },
+
+    async listProducts(input: CommerceListProductsInput = {}) {
+      debug.emit("debug", "Listing products", input);
+      try {
+        const payload = options.adapter?.listProducts
+          ? await options.adapter.listProducts(input)
+          : await sdk.commerce.products.list({
+            ...input,
+            ...(input.filter ? { filter: input.filter as Record<string, any> } : {}),
+          });
+        return asListFromPayload(payload);
+      } catch (error) {
+        throw new CommerceClientError("Failed to list products.", { cause: error });
       }
     },
 
@@ -407,6 +404,44 @@ export function createCommerceClient(options: CommerceClientOptions): CommerceCl
       }
     },
 
+    async listProductOffers(input: CommerceListProductOffersInput) {
+      debug.emit("debug", "Listing product offers", input);
+      const { productId, ...list } = input;
+      try {
+        const payload = options.adapter?.listProductOffers
+          ? await options.adapter.listProductOffers(input)
+          : await sdk.commerce.products.listOffers({
+            id: requirePositiveInteger(productId, "productId"),
+            ...list,
+            ...(list.filter ? { filter: list.filter as Record<string, any> } : {}),
+          });
+        return asListFromPayload(payload);
+      } catch (error) {
+        throw new CommerceClientError("Failed to list product offers.", {
+          cause: error,
+          details: { productId },
+        });
+      }
+    },
+
+    async getProductOffer(input: CommerceGetProductOfferInput) {
+      debug.emit("debug", "Getting product offer", input);
+      try {
+        return options.adapter?.getProductOffer
+          ? await options.adapter.getProductOffer(input)
+          : await sdk.commerce.products.getOffer({
+            productId: requirePositiveInteger(input.productId, "productId"),
+            id: requirePositiveInteger(input.offerId, "offerId"),
+          });
+      } catch (error) {
+        if (isNotFoundError(error)) return null;
+        throw new CommerceClientError("Failed to get product offer.", {
+          cause: error,
+          details: { ...input },
+        });
+      }
+    },
+
     async listShippingMethods(input: CommerceListShippingMethodsInput = {}) {
       debug.emit("debug", "Listing shipping methods", input);
 
@@ -423,6 +458,57 @@ export function createCommerceClient(options: CommerceClientOptions): CommerceCl
       } catch (error) {
         throw new CommerceClientError("Failed to list shipping methods.", {
           cause: error,
+        });
+      }
+    },
+
+    async getShippingMethod(input: CommerceGetShippingMethodInput) {
+      debug.emit("debug", "Getting shipping method", input);
+      try {
+        return options.adapter?.getShippingMethod
+          ? await options.adapter.getShippingMethod(input.id, {
+            ...(input.include ? { include: input.include } : {}),
+          })
+          : await sdk.commerce.shippingMethods.get(input.id, {
+            ...(input.include ? { include: input.include } : {}),
+          });
+      } catch (error) {
+        if (isNotFoundError(error)) return null;
+        throw new CommerceClientError("Failed to get shipping method.", {
+          cause: error,
+          details: { id: input.id },
+        });
+      }
+    },
+
+    async listShippingClasses(input: CommerceListShippingClassesInput = {}) {
+      debug.emit("debug", "Listing shipping classes", input);
+      try {
+        const payload = options.adapter?.listShippingClasses
+          ? await options.adapter.listShippingClasses(input)
+          : await sdk.commerce.shippingClasses.list({
+            ...input,
+            ...(input.filter ? { filter: input.filter as Record<string, unknown> } : {}),
+          });
+        return asListFromPayload(payload);
+      } catch (error) {
+        throw new CommerceClientError("Failed to list shipping classes.", { cause: error });
+      }
+    },
+
+    async getShippingClass(input: CommerceGetShippingClassInput) {
+      debug.emit("debug", "Getting shipping class", input);
+      try {
+        return options.adapter?.getShippingClass
+          ? await options.adapter.getShippingClass(input.id)
+          : await sdk.commerce.shippingClasses.get({
+            id: requirePositiveInteger(input.id, "shippingClassId"),
+          });
+      } catch (error) {
+        if (isNotFoundError(error)) return null;
+        throw new CommerceClientError("Failed to get shipping class.", {
+          cause: error,
+          details: { id: input.id },
         });
       }
     },
@@ -445,6 +531,60 @@ export function createCommerceClient(options: CommerceClientOptions): CommerceCl
       } catch (error) {
         throw new CommerceClientError("Failed to list payment methods.", {
           cause: error,
+        });
+      }
+    },
+
+    async getPaymentMethod(input: CommerceGetPaymentMethodInput) {
+      debug.emit("debug", "Getting payment method", input);
+      try {
+        return options.adapter?.getPaymentMethod
+          ? await options.adapter.getPaymentMethod(input.id)
+          : await sdk.settings.paymentMethods.get({
+            id: requirePositiveInteger(input.id, "paymentMethodId"),
+          });
+      } catch (error) {
+        if (isNotFoundError(error)) return null;
+        throw new CommerceClientError("Failed to get payment method.", {
+          cause: error,
+          details: { id: input.id },
+        });
+      }
+    },
+
+    async listPaymentMethodIssuers(input: CommerceListPaymentMethodIssuersInput) {
+      debug.emit("debug", "Listing payment method issuers", input);
+      try {
+        const payload = options.adapter?.listPaymentMethodIssuers
+          ? await options.adapter.listPaymentMethodIssuers(input)
+          : await sdk.settings.paymentMethodIssuers.list({
+            ...input,
+            methodId: requirePositiveInteger(input.methodId, "methodId"),
+            ...(input.filter ? { filter: input.filter as Record<string, unknown> } : {}),
+          });
+        return asListFromPayload(payload);
+      } catch (error) {
+        throw new CommerceClientError("Failed to list payment method issuers.", {
+          cause: error,
+          details: { methodId: input.methodId },
+        });
+      }
+    },
+
+    async getPaymentMethodIssuer(input: CommerceGetPaymentMethodIssuerInput) {
+      debug.emit("debug", "Getting payment method issuer", input);
+      try {
+        return options.adapter?.getPaymentMethodIssuer
+          ? await options.adapter.getPaymentMethodIssuer(input)
+          : await sdk.settings.paymentMethodIssuers.get({
+            methodId: requirePositiveInteger(input.methodId, "methodId"),
+            id: requirePositiveInteger(input.id, "issuerId"),
+          });
+      } catch (error) {
+        if (isNotFoundError(error)) return null;
+        throw new CommerceClientError("Failed to get payment method issuer.", {
+          cause: error,
+          details: { ...input },
         });
       }
     },
@@ -516,6 +656,55 @@ export function createCommerceClient(options: CommerceClientOptions): CommerceCl
             orderId: input.orderId,
           },
         });
+      }
+    },
+
+    async createOrderPayment(input: CommerceCreateOrderPaymentInput) {
+      debug.emit("debug", "Creating order payment", input);
+      try {
+        return options.adapter?.createOrderPayment
+          ? await options.adapter.createOrderPayment(input)
+          : await sdk.commerce.orders.createPayment({
+            orderId: input.orderId,
+            data: input.data,
+          }, input.requestOptions);
+      } catch (error) {
+        throw new CommerceClientError("Failed to create order payment.", {
+          cause: error,
+          details: { orderId: input.orderId },
+        });
+      }
+    },
+
+    async getOrderPayment(input: CommerceGetOrderPaymentInput) {
+      debug.emit("debug", "Getting order payment", input);
+      try {
+        return options.adapter?.getOrderPayment
+          ? await options.adapter.getOrderPayment(input)
+          : await sdk.commerce.orders.getPayment({
+            orderId: input.orderId,
+            id: requirePositiveInteger(input.id, "paymentId"),
+          });
+      } catch (error) {
+        if (isNotFoundError(error)) return null;
+        throw new CommerceClientError("Failed to get order payment.", {
+          cause: error,
+          details: { ...input },
+        });
+      }
+    },
+
+    async createPayment(input: CommerceCreatePaymentInput) {
+      debug.emit("debug", "Creating payment", input);
+      try {
+        return options.adapter?.createPayment
+          ? await options.adapter.createPayment(input)
+          : await sdk.commerce.payments.create({
+            ...(input.include ? { include: input.include } : {}),
+            data: input.data,
+          }, input.requestOptions);
+      } catch (error) {
+        throw new CommerceClientError("Failed to create payment.", { cause: error });
       }
     },
 

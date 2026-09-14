@@ -1,3 +1,6 @@
+import { Ominity } from "@ominity/api-typescript";
+import { HTTPClient } from "@ominity/api-typescript/lib/http.js";
+
 import type { CreateSubmitHandlerConfig, MetadataValue, SubmissionPayload } from "../types.js";
 import { createOminityFormSubmitHandler } from "./submitHandler.js";
 
@@ -167,15 +170,6 @@ function buildTempPath(formId: number, filename: string): { path: string; key: s
     path,
     key: `${path}/${safeFilename}`,
   };
-}
-
-function uploadPresignUrl(input: string): string {
-  const normalized = input.replace(/\/$/, "");
-  if (normalized.endsWith("/api")) {
-    return `${normalized}/v1/media-library/uploads/presign`;
-  }
-
-  return `${normalized}/api/v1/media-library/uploads/presign`;
 }
 
 function asObjectRecord(value: unknown): Record<string, unknown> | null {
@@ -376,53 +370,42 @@ export function createOminityFormUploadPresignRouteHandler(
         url: "",
         headers: {},
         publicUrl: publicUrlFromRequest(request, key, config.siteUrl),
+        path,
+        filename: key.split("/").pop() ?? "upload",
       });
     }
 
-    const response = await fetchImpl(uploadPresignUrl(baseUrl(config.ominityBaseUrl)), {
-      method: "POST",
-      headers: withLanguageHeader(
-        new Headers({
-          Authorization: `Bearer ${config.ominityApiKey!}`,
-          "Content-Type": "application/json",
-        }),
-        await getLanguage(request),
-      ),
-      body: JSON.stringify({
-        filename: key.split("/").pop(),
-        path,
-        mimeType: payload.mimeType,
-        size: payload.size,
-        metadata: {
-          display_name: payload.filename,
-          type: payload.fieldName ?? "form-file",
+    try {
+      const sdk = new Ominity({
+        serverURL: baseUrl(config.ominityBaseUrl),
+        security: { apiKey: config.ominityApiKey! },
+        language: await getLanguage(request),
+        httpClient: new HTTPClient({ fetcher: fetchImpl }),
+      });
+      const upload = await sdk.mediaLibrary.presignUpload({
+        data: {
+          filename: key.split("/").pop() ?? "upload",
+          path,
+          mimeType: payload.mimeType,
+          size: payload.size,
+          metadata: {
+            display_name: payload.filename,
+            type: payload.fieldName ?? "form-file",
+          },
         },
-      }),
-    });
-
-    const responseBody = await response.json().catch(() => ({})) as Record<string, unknown>;
-
-    if (!response.ok) {
-      return jsonResponse(
-        {
-          error:
-            typeof responseBody.detail === "string"
-              ? responseBody.detail
-              : "Unable to generate an upload URL.",
-        },
-        response.status || 500,
-      );
+      });
+      return jsonResponse(upload);
+    } catch (error) {
+      const record = typeof error === "object" && error !== null
+        ? error as { readonly status?: unknown; readonly statusCode?: unknown }
+        : null;
+      const status = typeof record?.status === "number"
+        ? record.status
+        : typeof record?.statusCode === "number"
+          ? record.statusCode
+          : 500;
+      return jsonResponse({ error: "Unable to generate an upload URL." }, status);
     }
-
-    return jsonResponse({
-      key,
-      url: typeof responseBody.url === "string" ? responseBody.url : "",
-      headers:
-        typeof responseBody.headers === "object" && responseBody.headers !== null
-          ? responseBody.headers
-          : {},
-      publicUrl: typeof responseBody.publicUrl === "string" ? responseBody.publicUrl : "",
-    });
   };
 }
 

@@ -1,6 +1,5 @@
+import type { CurrencyAmount } from "@ominity/api-typescript/models/common/amount";
 import type { ProductOffer } from "@ominity/api-typescript/models/commerce/product-offer";
-
-import type { CommerceAmount } from "./types.js";
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -51,7 +50,7 @@ export interface ResolvePriceFromPriceMapInput {
 
 export function resolvePriceFromPriceMap(
   input: ResolvePriceFromPriceMapInput,
-): CommerceAmount | null {
+): CurrencyAmount | null {
   const normalizedEntries = Object.entries(input.prices)
     .map(([currency, value]) => ({
       currency: currency.trim().toUpperCase(),
@@ -81,7 +80,7 @@ export function resolvePriceFromPriceMap(
     if (preferred) {
       return {
         currency: preferred.currency,
-        value: preferred.amount,
+        value: String(preferred.amount),
       };
     }
   }
@@ -94,7 +93,7 @@ export function resolvePriceFromPriceMap(
     if (fallback) {
       return {
         currency: fallback.currency,
-        value: fallback.amount,
+        value: String(fallback.amount),
       };
     }
   }
@@ -103,7 +102,7 @@ export function resolvePriceFromPriceMap(
   if (firstAllowed) {
     return {
       currency: firstAllowed.currency,
-      value: firstAllowed.amount,
+      value: String(firstAllowed.amount),
     };
   }
 
@@ -119,7 +118,7 @@ export interface ResolveCommerceProductPriceInput {
 /** Selects an amount already returned by the backend; it never calculates one. */
 export function resolveCommerceProductPrice(
   input: ResolveCommerceProductPriceInput,
-): CommerceAmount | null {
+): CurrencyAmount | null {
   const offer = input.offers.find((entry) => entry.quantity === 1) ?? input.offers[0];
   if (!offer) {
     return null;

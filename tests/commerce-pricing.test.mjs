@@ -14,7 +14,7 @@ test("resolvePriceFromPriceMap prefers selected currency", () => {
 
   assert.deepEqual(resolved, {
     currency: "USD",
-    value: 12,
+    value: "12",
   });
 });
 
@@ -31,7 +31,7 @@ test("resolvePriceFromPriceMap respects allowed currencies and fallback", () => 
 
   assert.deepEqual(resolved, {
     currency: "GBP",
-    value: 8,
+    value: "8",
   });
 });
 
@@ -46,6 +46,6 @@ test("resolvePriceFromPriceMap handles nested amount objects", () => {
 
   assert.deepEqual(resolved, {
     currency: "EUR",
-    value: 15.25,
+    value: "15.25",
   });
 });

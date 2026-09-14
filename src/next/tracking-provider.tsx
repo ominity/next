@@ -2,8 +2,10 @@
 
 import { usePathname, useSearchParams } from "next/navigation.js";
 import type { ReactNode } from "react";
-import { createContext, useContext, useEffect, useLayoutEffect, useRef } from "react";
+import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
+import { useOminityDebugCapability } from "../debug/context.js";
+import type { OminityDebugTrackingEvent, OminityDebugTrackingInfo } from "../debug/types.js";
 import {
   buildTrackingPageMetadata,
   ensureVisitorIdCookie,
@@ -524,6 +526,7 @@ export function TrackingProvider(props: TrackingProviderProps) {
   const sampledInRef = useRef<boolean | null>(null);
   const trackedScrollDepthsRef = useRef<Set<number>>(new Set());
   const pageMetadataEntriesRef = useRef<Map<symbol, TrackingEventMetadata>>(new Map());
+  const [debugEvents, setDebugEvents] = useState<ReadonlyArray<OminityDebugTrackingEvent>>([]);
   const pageMetadataRegistryRef = useRef<TrackingPageMetadataRegistry>({
     setPageMetadata(key, metadata) {
       if (metadata && Object.keys(metadata).length > 0) {
@@ -606,11 +609,39 @@ export function TrackingProvider(props: TrackingProviderProps) {
       ...(utm ? { utm } : {}),
     };
 
-    return dispatchTrackingEvent(trackEventRequest, {
+    const success = await dispatchTrackingEvent(trackEventRequest, {
       ...queueOptions,
       ...(options?.preferBeacon ? { preferBeacon: true } : {}),
       ...(options?.queueOnFailure === false ? { queueOnFailure: false } : {}),
     });
+
+    const debugEventStatus: OminityDebugTrackingEvent["status"] = success
+      ? "sent"
+      : options?.queueOnFailure === false ? "failed" : "queued";
+    const debugEventCreatedAt = typeof trackEventRequest.timestamp === "string"
+      ? trackEventRequest.timestamp
+      : trackEventRequest.timestamp instanceof Date
+        ? trackEventRequest.timestamp.toISOString()
+        : new Date().toISOString();
+
+    setDebugEvents((previous) => {
+      const debugEvent: OminityDebugTrackingEvent = {
+        name: trackEventRequest.event,
+        status: debugEventStatus,
+        createdAt: debugEventCreatedAt,
+        details: {
+          url: trackEventRequest.url,
+          title: trackEventRequest.title,
+          userId: trackEventRequest.userId,
+          metadata: trackEventRequest.metadata,
+          utm: trackEventRequest.utm,
+        },
+      };
+
+      return [debugEvent, ...previous].slice(0, 50);
+    });
+
+    return success;
   }
 
   useEffect(() => {
@@ -840,6 +871,62 @@ export function TrackingProvider(props: TrackingProviderProps) {
       document.removeEventListener("submit", handleSubmit, true);
     };
   }, [enabled, props.eventNames?.formSubmit, props.sampleRate, props.trackFormSubmissions]);
+
+  const debugTracking = useMemo<OminityDebugTrackingInfo>(() => {
+    const queuedCount = typeof window === "undefined" ? 0 : readQueue(queueKey).length;
+    const sentCount = debugEvents.filter((event) => event.status === "sent").length;
+    const failedCount = debugEvents.filter((event) => event.status === "failed").length;
+
+    return {
+      enabled,
+      ...(visitorIdRef.current ? { visitorId: visitorIdRef.current } : {}),
+      proxyEndpoint: endpoint,
+      pageOrigin: {
+        pathname,
+        pageKey,
+      },
+      queuedCount,
+      sentCount,
+      failedCount,
+      events: debugEvents,
+      details: {
+        sampleRate: normalizeSampleRate(props.sampleRate),
+        sampledIn: sampledInRef.current,
+        maxQueueSize,
+        queueKey,
+        sessionKey,
+        trackPageViews: props.trackPageViews !== false,
+        trackSessions: props.trackSessions !== false,
+        trackScrollDepth: props.trackScrollDepth !== false,
+        scrollDepthThresholds,
+        trackOutboundClicks: props.trackOutboundClicks !== false,
+        trackFileDownloads: props.trackFileDownloads !== false,
+        trackFormSubmissions: props.trackFormSubmissions !== false,
+        trackCustomClicks: props.trackCustomClicks !== false,
+        eventNames: props.eventNames,
+      },
+    };
+  }, [
+    debugEvents,
+    enabled,
+    endpoint,
+    maxQueueSize,
+    pageKey,
+    pathname,
+    props.eventNames,
+    props.sampleRate,
+    props.trackCustomClicks,
+    props.trackFileDownloads,
+    props.trackFormSubmissions,
+    props.trackOutboundClicks,
+    props.trackPageViews,
+    props.trackScrollDepth,
+    props.trackSessions,
+    queueKey,
+    scrollDepthThresholds,
+    sessionKey,
+  ]);
+  useOminityDebugCapability("tracking", debugTracking);
 
   return (
     <TrackingPageMetadataContext.Provider value={pageMetadataRegistryRef.current}>

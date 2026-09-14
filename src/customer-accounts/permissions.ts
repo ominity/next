@@ -28,14 +28,14 @@ function requirements(input: CustomerPermissionRequirement): ReadonlyArray<strin
 }
 
 export function hasCustomerPermission(
-  membership: Pick<CustomerUser, "permissions"> | null | undefined,
+  membership: Pick<CustomerUser, "isOwner" | "permissions"> | null | undefined,
   permission: string,
 ): boolean {
-  return membership?.permissions.includes(permission) === true;
+  return membership?.isOwner === true || membership?.permissions.includes(permission) === true;
 }
 
 export function hasEveryCustomerPermission(
-  membership: Pick<CustomerUser, "permissions"> | null | undefined,
+  membership: Pick<CustomerUser, "isOwner" | "permissions"> | null | undefined,
   required: CustomerPermissionRequirement,
 ): boolean {
   const list = requirements(required);
@@ -46,7 +46,7 @@ export function hasEveryCustomerPermission(
 }
 
 export function hasAnyCustomerPermission(
-  membership: Pick<CustomerUser, "permissions"> | null | undefined,
+  membership: Pick<CustomerUser, "isOwner" | "permissions"> | null | undefined,
   required: CustomerPermissionRequirement,
 ): boolean {
   const list = requirements(required);

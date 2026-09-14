@@ -1,30 +1,31 @@
 import type { CurrencyAmount } from "@ominity/api-typescript/models/common/amount";
 import type { Address } from "@ominity/api-typescript/models/commerce/address";
-import type { Cart as CommerceCart } from "@ominity/api-typescript/models/commerce/cart";
-import type { CartItem as CommerceCartItem } from "@ominity/api-typescript/models/commerce/cart-item";
-import type { Order as CommerceOrder } from "@ominity/api-typescript/models/commerce/order";
-import type { Payment as CommercePayment } from "@ominity/api-typescript/models/commerce/payment";
+import type { Cart } from "@ominity/api-typescript/models/commerce/cart";
+import type { CartItem } from "@ominity/api-typescript/models/commerce/cart-item";
+import type { Order } from "@ominity/api-typescript/models/commerce/order";
+import type { Payment } from "@ominity/api-typescript/models/commerce/payment";
 
 interface MockCartRecord {
   id: string;
   currency: string;
   country: string;
   promotionCodes: ReadonlyArray<string>;
-  items: Map<string, CommerceCartItem>;
+  items: Map<string, CartItem>;
   createdAt: string;
   updatedAt: string;
 }
 
 interface MockOrderRecord {
-  order: CommerceOrder;
+  order: Order;
   cartId: string;
 }
 
 const mockCarts = new Map<string, MockCartRecord>();
 const mockOrders = new Map<string, MockOrderRecord>();
-const mockPayments = new Map<string, ReadonlyArray<CommercePayment>>();
+const mockPayments = new Map<string, ReadonlyArray<Payment>>();
 
 let nextOrderId = 1;
+let nextPaymentId = 1;
 
 function createId(prefix: string): string {
   return `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
@@ -55,7 +56,7 @@ function emptyAddress(country: string): Address {
   };
 }
 
-function calculateTotals(items: ReadonlyArray<CommerceCartItem>, currency: string) {
+function calculateTotals(items: ReadonlyArray<CartItem>, currency: string) {
   const subtotal = items.reduce((sum, item) => {
     const value = item?.totalPrice?.value ?? item?.totalAmount?.value ?? "0";
     const parsed = Number.parseFloat(String(value));
@@ -76,7 +77,7 @@ function calculateTotals(items: ReadonlyArray<CommerceCartItem>, currency: strin
   };
 }
 
-function toCart(record: MockCartRecord): CommerceCart {
+function toCart(record: MockCartRecord): Cart {
   const items = Array.from(record.items.values());
   const totals = calculateTotals(items, record.currency);
 
@@ -130,7 +131,7 @@ function ensureCartRecord(cartId?: string): MockCartRecord {
     currency: "EUR",
     country: "BE",
     promotionCodes: [],
-    items: new Map<string, CommerceCartItem>(),
+    items: new Map<string, CartItem>(),
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
@@ -146,8 +147,8 @@ function normalizePromotionCodes(input: ReadonlyArray<string>): ReadonlyArray<st
 }
 
 export function mockGetOrCreateCart(cartId?: string): {
-  readonly cart: CommerceCart;
-  readonly items: ReadonlyArray<CommerceCartItem>;
+  readonly cart: Cart;
+  readonly items: ReadonlyArray<CartItem>;
   readonly created: boolean;
 } {
   const existing = cartId ? mockCarts.get(cartId) : undefined;
@@ -165,8 +166,8 @@ export function mockAddCartItem(input: {
   readonly productId: string;
   readonly quantity: number;
 }): {
-  readonly cart: CommerceCart;
-  readonly items: ReadonlyArray<CommerceCartItem>;
+  readonly cart: Cart;
+  readonly items: ReadonlyArray<CartItem>;
 } {
   const record = ensureCartRecord(input.cartId);
   const existing = Array.from(record.items.values()).find((entry) => {
@@ -180,7 +181,7 @@ export function mockAddCartItem(input: {
   if (existing) {
     const currentQuantity = Number(existing.quantity ?? 0);
     const nextQuantity = (Number.isFinite(currentQuantity) ? currentQuantity : 0) + quantity;
-    const nextItem: CommerceCartItem = {
+    const nextItem: CartItem = {
       ...existing,
       quantity: nextQuantity,
       unitAmount: money(unitPrice, currency),
@@ -221,8 +222,8 @@ export function mockUpdateCartItem(input: {
   readonly itemId: string;
   readonly quantity: number;
 }): {
-  readonly cart: CommerceCart;
-  readonly items: ReadonlyArray<CommerceCartItem>;
+  readonly cart: Cart;
+  readonly items: ReadonlyArray<CartItem>;
 } {
   const record = ensureCartRecord(input.cartId);
   const current = record.items.get(input.itemId);
@@ -263,8 +264,8 @@ export function mockDeleteCartItem(input: {
   readonly cartId: string;
   readonly itemId: string;
 }): {
-  readonly cart: CommerceCart;
-  readonly items: ReadonlyArray<CommerceCartItem>;
+  readonly cart: Cart;
+  readonly items: ReadonlyArray<CartItem>;
 } {
   const record = ensureCartRecord(input.cartId);
   record.items.delete(input.itemId);
@@ -281,8 +282,8 @@ export function mockUpdateCart(input: {
   readonly country?: string;
   readonly promotionCodes?: ReadonlyArray<string>;
 }): {
-  readonly cart: CommerceCart;
-  readonly items: ReadonlyArray<CommerceCartItem>;
+  readonly cart: Cart;
+  readonly items: ReadonlyArray<CartItem>;
 } {
   const record = ensureCartRecord(input.cartId);
 
@@ -308,13 +309,13 @@ export function mockUpdateCart(input: {
 export function mockCreateOrder(input: {
   readonly cartId: string;
   readonly orderNumberPrefix?: string;
-}): CommerceOrder {
+}): Order {
   const record = ensureCartRecord(input.cartId);
   const cart = toCart(record);
   const orderId = nextOrderId++;
   const now = new Date().toISOString();
 
-  const order: CommerceOrder = {
+  const order: Order = {
     resource: "order",
     id: orderId,
     customerId: 0,
@@ -360,15 +361,56 @@ export function mockCreateOrder(input: {
   return order;
 }
 
-export function mockGetOrder(orderId: string): CommerceOrder | null {
+export function mockGetOrder(orderId: string): Order | null {
   return mockOrders.get(orderId)?.order ?? null;
 }
 
-export function mockListOrderPayments(orderId: string): ReadonlyArray<CommercePayment> {
+export function mockListOrderPayments(orderId: string): ReadonlyArray<Payment> {
   return mockPayments.get(orderId) ?? [];
 }
 
-export function mockGetPayment(paymentId: string): CommercePayment | null {
+export function mockCreateOrderPayment(
+  orderId: string,
+  data: Readonly<Record<string, unknown>>,
+): Payment | null {
+  const order = mockOrders.get(orderId)?.order;
+  if (!order) return null;
+
+  const paymentmethodId = typeof data.paymentmethodId === "number"
+    && Number.isSafeInteger(data.paymentmethodId)
+    && data.paymentmethodId > 0
+    ? data.paymentmethodId
+    : 1;
+  const now = new Date().toISOString();
+  const paymentId = nextPaymentId++;
+  const payment: Payment = {
+    resource: "payment",
+    id: paymentId,
+    customerId: order.customerId || null,
+    paymentmethodId,
+    status: "open",
+    type: typeof data.type === "string" && data.type.trim() ? data.type : "payment",
+    amount: order.totalAmount,
+    description: `Payment for order ${order.id}`,
+    ...(typeof data.mandateId === "number" ? { mandateId: data.mandateId } : {}),
+    ...(typeof data.details === "object" && data.details !== null
+      ? { details: data.details as Record<string, unknown> }
+      : {}),
+    expiresAt: null,
+    completedAt: null,
+    updatedAt: now,
+    createdAt: now,
+    links: {
+      self: {
+        href: `https://mock.ominity.local/payments/${paymentId}`,
+      },
+    },
+  };
+  mockPayments.set(orderId, [...(mockPayments.get(orderId) ?? []), payment]);
+  return payment;
+}
+
+export function mockGetPayment(paymentId: string): Payment | null {
   for (const payments of mockPayments.values()) {
     const matched = payments.find((entry) => String(entry.id) === paymentId);
     if (matched) {

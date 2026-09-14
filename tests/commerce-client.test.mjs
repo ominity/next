@@ -162,3 +162,111 @@ test("createCommerceClient injects visitorId in cart and order payloads", async 
   assert.equal(captured.updateCart.visitorId, "already-set");
   assert.equal(captured.createOrder.visitorId, "648cd59e-8f79-40a7-a4de-1fb65b42c00c");
 });
+
+test("createCommerceClient exposes SDK 1.4.5 storefront resources without renamed models", async () => {
+  const calls = [];
+  const client = createCommerceClient({
+    sdk: { serverURL: "https://example.ominity.test/api" },
+    adapter: {
+      async listProducts(input) {
+        calls.push(["products", input]);
+        return { items: [{ id: 4, title: "Desk Lamp" }] };
+      },
+      async listProductOffers(input) {
+        calls.push(["offers", input]);
+        return { items: [{ id: 7, productId: 4 }] };
+      },
+      async getProductOffer(input) {
+        calls.push(["offer", input]);
+        return { id: input.offerId, productId: input.productId };
+      },
+      async listCartShippingMethods(cartId) {
+        calls.push(["cart-shipping", cartId]);
+        return {
+          items: [{ id: 2, name: "Express" }],
+          count: 1,
+          page: 1,
+          limit: 20,
+          totalPages: 1,
+          hasNext: false,
+          hasPrevious: false,
+          shippingZone: { id: 3, name: "Belgium" },
+        };
+      },
+      async listPaymentMethodIssuers(input) {
+        calls.push(["issuers", input]);
+        return { items: [{ id: 9, paymentmethodId: input.methodId, name: "Bank" }] };
+      },
+      async createOrderPayment(input) {
+        calls.push(["order-payment", input]);
+        return { id: 31, status: "open" };
+      },
+      async createPayment(input) {
+        calls.push(["payment", input]);
+        return { id: 32, status: "open" };
+      },
+    },
+  });
+
+  const products = await client.listProducts({ page: 2, filter: { published: true } });
+  const offers = await client.listProductOffers({ productId: 4, page: 1 });
+  const offer = await client.getProductOffer({ productId: 4, offerId: 7 });
+  const shipping = await client.listCartShippingMethods({ cartId: "cart-1" });
+  const issuers = await client.listPaymentMethodIssuers({ methodId: 5 });
+  const orderPayment = await client.createOrderPayment({
+    orderId: "order-1",
+    data: { paymentmethodId: 5, redirectUrl: "https://store.example.com/return" },
+  });
+  const payment = await client.createPayment({
+    data: { paymentmethodId: 5, redirectUrl: "https://store.example.com/return" },
+  });
+
+  assert.equal(products[0].title, "Desk Lamp");
+  assert.equal(offers[0].productId, 4);
+  assert.equal(offer.id, 7);
+  assert.equal(shipping.shippingZone.name, "Belgium");
+  assert.equal(issuers[0].paymentmethodId, 5);
+  assert.equal(orderPayment.id, 31);
+  assert.equal(payment.id, 32);
+  assert.deepEqual(calls.map(([operation]) => operation), [
+    "products",
+    "offers",
+    "offer",
+    "cart-shipping",
+    "issuers",
+    "order-payment",
+    "payment",
+  ]);
+});
+
+test("commerce debug logging redacts nested payment credentials", async () => {
+  const events = [];
+  const client = createCommerceClient({
+    sdk: { serverURL: "https://example.ominity.test/api" },
+    debug: {
+      enabled: true,
+      logger: { log: (event) => events.push(event) },
+    },
+    adapter: {
+      async createPayment() {
+        return { id: 44, status: "open" };
+      },
+    },
+  });
+
+  await client.createPayment({
+    data: {
+      paymentmethodId: 4,
+      redirectUrl: "https://store.example.com/payment/return",
+      details: { cardToken: "sensitive-card-token" },
+    },
+    requestOptions: {
+      headers: { Authorization: "Bearer sensitive-access-token" },
+    },
+  });
+
+  assert.equal(events.length, 1);
+  assert.equal(events[0].payload.data.details.cardToken, "[redacted]");
+  assert.equal(events[0].payload.requestOptions.headers.Authorization, "[redacted]");
+  assert.equal(JSON.stringify(events[0]).includes("sensitive"), false);
+});

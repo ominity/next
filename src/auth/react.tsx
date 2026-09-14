@@ -1,7 +1,6 @@
 "use client";
 
 import type { UserCreateInput } from "@ominity/api-typescript/models/operations";
-import type { Address } from "@ominity/api-typescript/models/commerce/address";
 import {
   createContext,
   useCallback,
@@ -12,6 +11,8 @@ import {
   type ReactNode,
 } from "react";
 
+import { useOminityDebugCapability } from "../debug/context.js";
+import type { OminityDebugAuthInfo } from "../debug/types.js";
 import type {
   OminityAuthPublicLoginActivity,
   OminityAuthPublicLoginActivityPage,
@@ -27,9 +28,18 @@ export type OminityBrowserMfaMethod = OminityAuthPublicMfaMethod;
 export type OminityBrowserLoginActivity = OminityAuthPublicLoginActivity;
 export type OminityBrowserLoginActivityPage = OminityAuthPublicLoginActivityPage;
 
-export interface OminitySavedCheckoutAddress extends Address {
+export interface OminitySavedCheckoutAddress {
   readonly id: string;
   readonly label: string;
+  readonly firstName: string;
+  readonly lastName: string;
+  readonly street: string;
+  readonly number: string;
+  readonly additional: string;
+  readonly city: string;
+  readonly postalCode: string;
+  readonly region: string;
+  readonly country: string;
   readonly phone?: string;
 }
 
@@ -652,6 +662,53 @@ export function OminityAuthProvider(props: OminityAuthProviderProps) {
     saveAddress,
     deleteSavedAddress,
   ]);
+
+  const debugAuth = useMemo<OminityDebugAuthInfo>(() => ({
+    enabled: true,
+    ready,
+    authenticated: !!session,
+    user: session
+      ? {
+        ...(typeof session.userId !== "undefined" ? { userId: session.userId } : {}),
+        ...(session.email ? { email: session.email } : {}),
+        ...(session.firstName ? { firstName: session.firstName } : {}),
+        ...(session.lastName ? { lastName: session.lastName } : {}),
+      }
+      : null,
+    session,
+    mfaVerified,
+    mfaMethods,
+    loginActivity: loginActivity?.items ?? [],
+    savedAddressCount: savedAddresses.length,
+    actions: {
+      refresh: refreshAuth,
+      signIn: async (input) => {
+        await signIn(input);
+      },
+      signOut,
+    },
+    details: {
+      endpoints,
+      loginActivityLoading,
+      loginActivityError: loginActivityError?.message,
+      addressStoragePrefix: storagePrefix,
+    },
+  }), [
+    endpoints,
+    loginActivity?.items,
+    loginActivityError?.message,
+    loginActivityLoading,
+    mfaMethods,
+    mfaVerified,
+    ready,
+    refreshAuth,
+    savedAddresses.length,
+    session,
+    signIn,
+    signOut,
+    storagePrefix,
+  ]);
+  useOminityDebugCapability("auth", debugAuth);
 
   return <AuthContext.Provider value={value}>{props.children}</AuthContext.Provider>;
 }

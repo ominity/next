@@ -8,6 +8,7 @@ import {
   type ChangeEvent,
 } from "react";
 
+import { useOminityDebugSnapshot } from "./context.js";
 import {
   entryMatchesRequestGroup,
   entryMatchesSearch,
@@ -42,6 +43,7 @@ import type {
   OminityDebugListResponse,
   OminityDebugRenderingInfo,
   OminityDebugRequestGroup,
+  OminityDebugSnapshot,
   OminityDebugSource,
   OminityDebugTheme,
   OminityDebugTrackingInfo,
@@ -110,6 +112,7 @@ export function OminityDebugBar(props: OminityDebugBarProps) {
   const [liveUpdatesPaused, setLiveUpdatesPaused] = useState(false);
   const systemDark = useSystemDarkMode();
   const palette = resolvePalette(theme, systemDark);
+  const autoSnapshot = useOminityDebugSnapshot();
 
   const endpoint = props.endpoint ?? "/api/debug/sdk-requests";
   const title = props.title ?? "Ominity Debug";
@@ -129,6 +132,55 @@ export function OminityDebugBar(props: OminityDebugBarProps) {
       setTheme(props.theme);
     }
   }, [props.theme]);
+
+  const resolvedDebugInfo = useMemo<OminityDebugSnapshot>(() => ({
+    ...(props.integration ?? autoSnapshot.integration ? {
+      integration: props.integration ?? autoSnapshot.integration,
+    } : {}),
+    ...(props.health ?? autoSnapshot.health ? {
+      health: props.health ?? autoSnapshot.health,
+    } : {}),
+    ...(props.channel ?? autoSnapshot.channel ? {
+      channel: props.channel ?? autoSnapshot.channel,
+    } : {}),
+    ...(props.rendering ?? autoSnapshot.rendering ? {
+      rendering: props.rendering ?? autoSnapshot.rendering,
+    } : {}),
+    ...(props.cache ?? autoSnapshot.cache ? {
+      cache: props.cache ?? autoSnapshot.cache,
+    } : {}),
+    ...(typeof props.auth !== "undefined" ? { auth: props.auth } : (
+      typeof autoSnapshot.auth !== "undefined" ? { auth: autoSnapshot.auth } : {}
+    )),
+    ...(typeof props.customer !== "undefined" ? { customer: props.customer } : (
+      typeof autoSnapshot.customer !== "undefined" ? { customer: autoSnapshot.customer } : {}
+    )),
+    ...(props.commerce ?? autoSnapshot.commerce ? {
+      commerce: props.commerce ?? autoSnapshot.commerce,
+    } : {}),
+    ...(props.forms ?? autoSnapshot.forms ? {
+      forms: props.forms ?? autoSnapshot.forms,
+    } : {}),
+    ...(props.tracking ?? autoSnapshot.tracking ? {
+      tracking: props.tracking ?? autoSnapshot.tracking,
+    } : {}),
+    ...(props.utilities ?? autoSnapshot.utilities ? {
+      utilities: props.utilities ?? autoSnapshot.utilities,
+    } : {}),
+  }), [
+    autoSnapshot,
+    props.auth,
+    props.cache,
+    props.channel,
+    props.commerce,
+    props.customer,
+    props.forms,
+    props.health,
+    props.integration,
+    props.rendering,
+    props.tracking,
+    props.utilities,
+  ]);
 
   const fetchEntries = useCallback(async () => {
     if (!props.enabled) {
@@ -205,52 +257,40 @@ export function OminityDebugBar(props: OminityDebugBarProps) {
 
   const snapshot = useMemo<OminityDebugSnapshotInput>(() => ({
     generatedAt: new Date().toISOString(),
-    ...(props.integration ? { integration: props.integration } : {}),
-    ...(props.health ? { health: props.health } : {}),
-    ...(props.channel ? { channel: props.channel } : {}),
-    ...(props.rendering ? { rendering: props.rendering } : {}),
-    ...(props.cache ? { cache: props.cache } : {}),
-    ...(typeof props.auth !== "undefined" ? { auth: props.auth } : {}),
-    ...(typeof props.customer !== "undefined" ? { customer: props.customer } : {}),
-    ...(props.commerce ? { commerce: props.commerce } : {}),
-    ...(props.forms ? { forms: props.forms } : {}),
-    ...(props.tracking ? { tracking: props.tracking } : {}),
-    ...(props.utilities ? { utilities: props.utilities } : {}),
+    ...resolvedDebugInfo,
     requestGroups,
     entries,
-  }), [
-    entries,
-    props.auth,
-    props.cache,
-    props.channel,
-    props.commerce,
-    props.customer,
-    props.forms,
-    props.health,
-    props.integration,
-    props.rendering,
-    props.tracking,
-    props.utilities,
-    requestGroups,
-  ]);
+  }), [entries, requestGroups, resolvedDebugInfo]);
+
+  const tabItems = useMemo<ReadonlyArray<{
+    readonly key: OminityDebugBarTab;
+    readonly label: string;
+    readonly count?: number;
+  }>>(() => [
+    { key: "general", label: "General" },
+    { key: "health", label: "Health" },
+    ...(resolvedDebugInfo.channel ? [{ key: "channel" as const, label: "Channel" }] : []),
+    ...(resolvedDebugInfo.rendering ? [{ key: "rendering" as const, label: "Rendering" }] : []),
+    ...(resolvedDebugInfo.cache ? [{ key: "cache" as const, label: "Cache" }] : []),
+    ...(resolvedDebugInfo.auth !== false && (resolvedDebugInfo.auth || resolvedDebugInfo.customer)
+      ? [{ key: "auth" as const, label: "Auth" }]
+      : []),
+    ...(resolvedDebugInfo.commerce ? [{ key: "commerce" as const, label: "Commerce" }] : []),
+    ...(resolvedDebugInfo.forms ? [{ key: "forms" as const, label: "Forms" }] : []),
+    ...(resolvedDebugInfo.tracking ? [{ key: "tracking" as const, label: "Tracking" }] : []),
+    { key: "requests", label: "Requests", count: visibleEntries.length },
+    { key: "tools", label: "Tools" },
+  ], [resolvedDebugInfo, visibleEntries.length]);
+
+  useEffect(() => {
+    if (!tabItems.some((tab) => tab.key === activeTab)) {
+      setActiveTab(tabItems[0]?.key ?? "general");
+    }
+  }, [activeTab, tabItems]);
 
   if (!props.enabled) {
     return null;
   }
-
-  const tabItems: ReadonlyArray<{ readonly key: OminityDebugBarTab; readonly label: string; readonly count?: number }> = [
-    { key: "general", label: "General" },
-    { key: "health", label: "Health" },
-    { key: "channel", label: "Channel" },
-    { key: "rendering", label: "Rendering" },
-    { key: "cache", label: "Cache" },
-    { key: "auth", label: "Auth" },
-    { key: "commerce", label: "Commerce" },
-    { key: "forms", label: "Forms" },
-    { key: "tracking", label: "Tracking" },
-    { key: "requests", label: "Requests", count: visibleEntries.length },
-    { key: "tools", label: "Tools" },
-  ];
 
   return (
     <div
@@ -341,7 +381,7 @@ export function OminityDebugBar(props: OminityDebugBarProps) {
             {activeTab === "general" && (
               <GeneralTab
                 palette={palette}
-                integration={props.integration}
+                integration={resolvedDebugInfo.integration}
                 stats={stats}
                 endpoint={endpoint}
                 source={source}
@@ -349,14 +389,20 @@ export function OminityDebugBar(props: OminityDebugBarProps) {
                 lastError={lastError}
               />
             )}
-            {activeTab === "health" && <HealthTab palette={palette} health={props.health} />}
-            {activeTab === "channel" && <ChannelTab palette={palette} channel={props.channel} />}
-            {activeTab === "rendering" && <RenderingTab palette={palette} rendering={props.rendering} />}
-            {activeTab === "cache" && <CacheTab palette={palette} cache={props.cache} />}
-            {activeTab === "auth" && <AuthTab palette={palette} auth={props.auth} customer={props.customer} />}
-            {activeTab === "commerce" && <CommerceTab palette={palette} commerce={props.commerce} />}
-            {activeTab === "forms" && <FormsTab palette={palette} forms={props.forms} />}
-            {activeTab === "tracking" && <TrackingTab palette={palette} tracking={props.tracking} />}
+            {activeTab === "health" && <HealthTab palette={palette} health={resolvedDebugInfo.health} />}
+            {activeTab === "channel" && <ChannelTab palette={palette} channel={resolvedDebugInfo.channel} />}
+            {activeTab === "rendering" && <RenderingTab palette={palette} rendering={resolvedDebugInfo.rendering} />}
+            {activeTab === "cache" && <CacheTab palette={palette} cache={resolvedDebugInfo.cache} />}
+            {activeTab === "auth" && (
+              <AuthTab
+                palette={palette}
+                auth={resolvedDebugInfo.auth}
+                customer={resolvedDebugInfo.customer}
+              />
+            )}
+            {activeTab === "commerce" && <CommerceTab palette={palette} commerce={resolvedDebugInfo.commerce} />}
+            {activeTab === "forms" && <FormsTab palette={palette} forms={resolvedDebugInfo.forms} />}
+            {activeTab === "tracking" && <TrackingTab palette={palette} tracking={resolvedDebugInfo.tracking} />}
             {activeTab === "requests" && (
               <RequestsTab
                 palette={palette}

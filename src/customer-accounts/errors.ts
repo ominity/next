@@ -16,6 +16,14 @@ export class CustomerAccountsError extends Error {
     super(message);
   }
 
+  get fields(): Readonly<Record<string, ReadonlyArray<string>>> | undefined {
+    if (typeof this.details !== "object" || this.details === null) return undefined;
+    const fields = (this.details as { readonly fields?: unknown }).fields;
+    return typeof fields === "object" && fields !== null
+      ? fields as Readonly<Record<string, ReadonlyArray<string>>>
+      : undefined;
+  }
+
   get isAuthenticationError(): boolean {
     return this.status === 401;
   }

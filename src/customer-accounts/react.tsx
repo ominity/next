@@ -18,6 +18,13 @@ import {
   type OminityAuthSignInInput,
   type OminityBrowserMfaMethod,
 } from "../auth/react.js";
+import {
+  useOminityQuery,
+  type UseOminityQueryOptions,
+  type UseOminityQueryResult,
+} from "../actions/react.js";
+import { useOminityDebugCapability } from "../debug/context.js";
+import type { OminityDebugCustomerInfo } from "../debug/types.js";
 import { createCustomerAccountsClient } from "./client.js";
 import { CustomerAccountsError } from "./errors.js";
 import {
@@ -91,6 +98,7 @@ export interface OminityCustomerAccountsProviderProps {
 }
 
 export interface OminityCustomerAccountsContextValue {
+  readonly client: CustomerAccountsClient;
   readonly ready: boolean;
   readonly loading: boolean;
   readonly teamLoading: boolean;
@@ -177,6 +185,33 @@ function requireMatchingInvitationEmail(
       { email: invitation.email },
     );
   }
+}
+
+function debugCustomerMembership(membership: CustomerUser) {
+  const name = [membership.firstName, membership.lastName].filter(Boolean).join(" ");
+  return {
+    customerId: membership.customerId,
+    userId: membership.userId,
+    roleId: membership.roleId,
+    ...(membership.role ? {
+      roleKey: membership.role.key,
+      roleName: membership.role.name,
+    } : {}),
+    ...(name ? { name } : {}),
+    email: membership.email,
+    permissions: membership.permissions,
+    ...(membership.customer ? {
+      customer: {
+        id: membership.customer.id,
+        ...(membership.customer.name ? { name: membership.customer.name } : {}),
+      },
+    } : {}),
+    details: {
+      isOwner: membership.isOwner,
+      createdAt: membership.createdAt,
+      updatedAt: membership.updatedAt,
+    },
+  };
 }
 
 function withoutTeamError(
@@ -650,6 +685,7 @@ export function OminityCustomerAccountsProvider(props: OminityCustomerAccountsPr
   );
 
   const value = useMemo<OminityCustomerAccountsContextValue>(() => ({
+    client,
     ready,
     loading,
     teamLoading,
@@ -685,6 +721,7 @@ export function OminityCustomerAccountsProvider(props: OminityCustomerAccountsPr
     signInAndAcceptInvitation,
     registerAndAcceptInvitation,
   }), [
+    client,
     ready,
     loading,
     teamLoading,
@@ -716,6 +753,65 @@ export function OminityCustomerAccountsProvider(props: OminityCustomerAccountsPr
     registerAndAcceptInvitation,
   ]);
 
+  const debugCustomer = useMemo<OminityDebugCustomerInfo>(() => ({
+    enabled: true,
+    ready,
+    loading,
+    activeCustomerId: accountContext.activeCustomerId,
+    activeMembership: accountContext.activeMembership
+      ? debugCustomerMembership(accountContext.activeMembership)
+      : null,
+    memberships: accountContext.memberships.map(debugCustomerMembership),
+    ...(team.members ? { memberCount: team.members.count } : {}),
+    ...(team.invitations ? { invitationCount: team.invitations.count } : {}),
+    ...(team.roles ? { roles: team.roles.items.map((role) => ({
+      id: role.id,
+      key: role.key,
+      name: role.name,
+    })) } : {}),
+    ...(team.permissionCatalog ? {
+      permissionCatalog: team.permissionCatalog.permissions.map((permission) => permission.key),
+    } : {}),
+    pendingMutations: Array.from(pendingMutations),
+    actions: {
+      refresh: async () => {
+        await refreshContext();
+      },
+      switchCustomer: async (customerId) => {
+        const parsed = typeof customerId === "number" ? customerId : Number.parseInt(customerId, 10);
+        if (Number.isSafeInteger(parsed)) {
+          await switchCustomer(parsed);
+        }
+      },
+    },
+    details: {
+      teamLoading,
+      teamErrors: Object.fromEntries(
+        Object.entries(teamErrors).map(([resource, resourceError]) => [
+          resource,
+          resourceError?.message,
+        ]),
+      ),
+      permissionGroups: team.permissionCatalog?.groups,
+      inspectedInvitationId: inspectedInvitation?.id,
+    },
+  }), [
+    accountContext,
+    inspectedInvitation?.id,
+    loading,
+    pendingMutations,
+    ready,
+    refreshContext,
+    switchCustomer,
+    team.invitations?.count,
+    team.members?.count,
+    team.permissionCatalog,
+    team.roles?.items,
+    teamErrors,
+    teamLoading,
+  ]);
+  useOminityDebugCapability("customer", debugCustomer);
+
   return (
     <CustomerAccountsContext.Provider value={value}>
       {props.children}
@@ -739,6 +835,80 @@ export function useCustomerPermission(
 ): boolean {
   const accounts = useOminityCustomerAccounts();
   return mode === "any" ? accounts.canAny(required) : accounts.canAll(required);
+}
+
+export interface OminityCustomerQueryContext {
+  readonly client: CustomerAccountsClient;
+  readonly customerId: number;
+  readonly signal: AbortSignal;
+}
+
+export type OminityCustomerQueryLoader<TData> = (
+  context: OminityCustomerQueryContext,
+) => Promise<TData>;
+
+export interface UseOminityCustomerQueryOptions<TData>
+  extends UseOminityQueryOptions<TData> {
+  readonly permission?: CustomerPermissionRequirement;
+  readonly permissionMode?: "all" | "any";
+}
+
+interface CustomerQueryEnvelope<TData> {
+  readonly customerId: number;
+  readonly data: TData;
+}
+
+/**
+ * Loads active-customer data and automatically reloads when the selected
+ * account changes. Results from the previous account are never exposed.
+ */
+export function useOminityCustomerQuery<TData>(
+  loader: OminityCustomerQueryLoader<TData>,
+  options: UseOminityCustomerQueryOptions<TData> = {},
+): UseOminityQueryResult<TData> {
+  const accounts = useOminityCustomerAccounts();
+  const loaderRef = useRef(loader);
+  loaderRef.current = loader;
+  const customerId = accounts.activeCustomerId;
+  const allowed = !options.permission
+    || (options.permissionMode === "any"
+      ? accounts.canAny(options.permission)
+      : accounts.canAll(options.permission));
+  const enabled = (options.enabled ?? true) && accounts.ready && customerId !== null && allowed;
+  const queryLoader = useCallback(async ({ signal }: { signal: AbortSignal }) => {
+    if (customerId === null) {
+      throw new CustomerAccountsError(
+        "No customer account is active.",
+        409,
+        "NO_ACTIVE_CUSTOMER",
+      );
+    }
+    return {
+      customerId,
+      data: await loaderRef.current({ client: accounts.client, customerId, signal }),
+    };
+  }, [accounts.client, customerId]);
+  const query = useOminityQuery<CustomerQueryEnvelope<TData>>(queryLoader, {
+    enabled,
+    ...(typeof options.initialData !== "undefined" && customerId !== null
+      ? { initialData: { customerId, data: options.initialData } }
+      : {}),
+    ...(options.onError ? { onError: options.onError } : {}),
+  });
+  const current = enabled && query.data?.customerId === customerId
+    ? query.data.data
+    : undefined;
+
+  return {
+    data: current,
+    error: query.error,
+    loading: enabled && (query.loading || typeof current === "undefined"),
+    ready: !enabled || (query.ready && typeof current !== "undefined"),
+    async refresh() {
+      const result = await query.refresh();
+      return result?.customerId === customerId ? result.data : undefined;
+    },
+  };
 }
 
 export interface CustomerPermissionBoundaryProps {

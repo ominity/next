@@ -1,7 +1,7 @@
 import type { OminityOptions } from "@ominity/api-typescript";
 import type { RequestOptions } from "@ominity/api-typescript/lib/sdks.js";
 
-export type AuthRequestOptions = RequestOptions;
+export type { RequestOptions } from "@ominity/api-typescript/lib/sdks.js";
 
 export type AuthUserId = number | string;
 export type AuthTokenId = number | string;
@@ -59,7 +59,7 @@ export interface AuthOAuthTokenInput {
   readonly code?: string;
   readonly redirectUri?: string;
   readonly codeVerifier?: string;
-  readonly requestOptions?: AuthRequestOptions;
+  readonly requestOptions?: RequestOptions;
 }
 
 export interface PasswordGrantRequestInput {
@@ -69,7 +69,7 @@ export interface PasswordGrantRequestInput {
   readonly clientId: string;
   readonly clientSecret: string;
   readonly scope?: string;
-  readonly requestOptions?: AuthRequestOptions;
+  readonly requestOptions?: RequestOptions;
 }
 
 export interface RefreshTokenRequestInput {
@@ -78,13 +78,13 @@ export interface RefreshTokenRequestInput {
   readonly clientId: string;
   readonly clientSecret: string;
   readonly scope?: string;
-  readonly requestOptions?: AuthRequestOptions;
+  readonly requestOptions?: RequestOptions;
 }
 
 export interface UserAccessTokenRequestInput {
   readonly sdk: OminityOptions;
   readonly userId: AuthUserId;
-  readonly requestOptions?: AuthRequestOptions;
+  readonly requestOptions?: RequestOptions;
 }
 
 export interface AuthMfaMethod {
@@ -187,7 +187,7 @@ export interface AuthIssuePasswordTokenInput {
   readonly clientId: string;
   readonly clientSecret: string;
   readonly scope?: string;
-  readonly requestOptions?: AuthRequestOptions;
+  readonly requestOptions?: RequestOptions;
 }
 
 export interface AuthIssueRefreshTokenInput {
@@ -195,12 +195,12 @@ export interface AuthIssueRefreshTokenInput {
   readonly clientId: string;
   readonly clientSecret: string;
   readonly scope?: string;
-  readonly requestOptions?: AuthRequestOptions;
+  readonly requestOptions?: RequestOptions;
 }
 
 export interface AuthIssueUserAccessTokenInput {
   readonly userId: AuthUserId;
-  readonly requestOptions?: AuthRequestOptions;
+  readonly requestOptions?: RequestOptions;
 }
 
 export interface AuthIssueTokenInput extends AuthOAuthTokenInput {}
@@ -216,14 +216,14 @@ export interface AuthListUserOAuthAccountsInput {
     readonly identifier?: string;
     readonly email?: string;
   };
-  readonly requestOptions?: AuthRequestOptions;
+  readonly requestOptions?: RequestOptions;
 }
 
 export interface AuthListUserCustomersInput {
   readonly userId: AuthUserId;
   readonly page?: number;
   readonly limit?: number;
-  readonly requestOptions?: AuthRequestOptions;
+  readonly requestOptions?: RequestOptions;
 }
 
 export interface AuthListUserLoginsInput {
@@ -236,20 +236,20 @@ export interface AuthListUserLoginsInput {
     readonly ipAddress?: string;
     readonly location?: string;
   };
-  readonly requestOptions?: AuthRequestOptions;
+  readonly requestOptions?: RequestOptions;
 }
 
 export interface AuthGetUserLoginInput {
   readonly userId: AuthUserId;
   readonly loginId: AuthUserId;
-  readonly requestOptions?: AuthRequestOptions;
+  readonly requestOptions?: RequestOptions;
 }
 
 export interface AuthRecordUserLoginInput {
   readonly userId: AuthUserId;
   readonly ipAddress: string;
   readonly userAgent: string;
-  readonly requestOptions?: AuthRequestOptions;
+  readonly requestOptions?: RequestOptions;
 }
 
 export interface AuthListUserRecoveryCodesInput {
@@ -259,25 +259,25 @@ export interface AuthListUserRecoveryCodesInput {
     readonly id?: number;
     readonly active?: boolean;
   };
-  readonly requestOptions?: AuthRequestOptions;
+  readonly requestOptions?: RequestOptions;
 }
 
 export interface AuthRegenerateRecoveryCodesInput {
   readonly userId: AuthUserId;
   readonly confirm: boolean;
-  readonly requestOptions?: AuthRequestOptions;
+  readonly requestOptions?: RequestOptions;
 }
 
 export interface AuthValidateRecoveryCodeInput {
   readonly userId: AuthUserId;
   readonly code: string;
-  readonly requestOptions?: AuthRequestOptions;
+  readonly requestOptions?: RequestOptions;
 }
 
 export interface AuthUserMfaMethodInput {
   readonly userId: AuthUserId;
   readonly method: string;
-  readonly requestOptions?: AuthRequestOptions;
+  readonly requestOptions?: RequestOptions;
 }
 
 export interface AuthValidateMfaInput extends AuthUserMfaMethodInput {
@@ -289,7 +289,7 @@ export interface AuthSendPasswordResetLinkInput {
   readonly redirectUrl: string;
   readonly userAgent?: string | null;
   readonly ipAddress?: string | null;
-  readonly requestOptions?: AuthRequestOptions;
+  readonly requestOptions?: RequestOptions;
 }
 
 export interface AuthResetPasswordInput {
@@ -298,7 +298,7 @@ export interface AuthResetPasswordInput {
   readonly password: string;
   readonly userAgent?: string | null;
   readonly ipAddress?: string | null;
-  readonly requestOptions?: AuthRequestOptions;
+  readonly requestOptions?: RequestOptions;
 }
 
 export interface AuthClient {
@@ -306,10 +306,10 @@ export interface AuthClient {
   issuePasswordToken(input: AuthIssuePasswordTokenInput): Promise<OAuthTokenResponse>;
   issueRefreshToken(input: AuthIssueRefreshTokenInput): Promise<OAuthTokenResponse>;
   issueUserAccessToken(input: AuthIssueUserAccessTokenInput): Promise<OAuthTokenResponse>;
-  refreshTransientTokenCookie(input?: { requestOptions?: AuthRequestOptions }): Promise<string>;
-  listAuthorizedTokens(input?: { requestOptions?: AuthRequestOptions }): Promise<ReadonlyArray<unknown>>;
-  revokeAuthorizedToken(input: { tokenId: AuthTokenId; requestOptions?: AuthRequestOptions }): Promise<void>;
-  listUserMfaMethods(input: { userId: AuthUserId; requestOptions?: AuthRequestOptions }): Promise<AuthPaginatedResult<AuthMfaMethod>>;
+  refreshTransientTokenCookie(input?: { requestOptions?: RequestOptions }): Promise<string>;
+  listAuthorizedTokens(input?: { requestOptions?: RequestOptions }): Promise<ReadonlyArray<unknown>>;
+  revokeAuthorizedToken(input: { tokenId: AuthTokenId; requestOptions?: RequestOptions }): Promise<void>;
+  listUserMfaMethods(input: { userId: AuthUserId; requestOptions?: RequestOptions }): Promise<AuthPaginatedResult<AuthMfaMethod>>;
   getUserMfaMethod(input: AuthUserMfaMethodInput): Promise<AuthMfaMethod>;
   enableUserMfaMethod(input: AuthUserMfaMethodInput): Promise<AuthMfaMethod>;
   disableUserMfaMethod(input: AuthUserMfaMethodInput): Promise<AuthStatusResult>;

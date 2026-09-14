@@ -1,4 +1,5 @@
 import type { OminityOptions } from "@ominity/api-typescript";
+import type { CreateOrderPaymentRequest } from "@ominity/api-typescript/models/operations";
 
 import { createCommerceClient } from "../client.js";
 import {
@@ -25,6 +26,7 @@ import {
 } from "../../server/route-utils.js";
 import {
   mockAddCartItem,
+  mockCreateOrderPayment,
   mockCreateOrder,
   mockDeleteCartItem,
   mockGetOrder,
@@ -44,9 +46,11 @@ export type OminityRequestCountryResolver = (
 ) => MaybePromise<string | undefined | null>;
 
 export interface OminityCommerceRouteHandlerConfig {
+  readonly basePath?: string | undefined;
   readonly ominityBaseUrl?: string | undefined;
   readonly ominityApiKey?: string | undefined;
   readonly channelId?: string | undefined;
+  readonly siteUrl?: string | undefined;
   readonly cartCookieName?: string | undefined;
   readonly cartCookieMaxAgeSeconds?: number | undefined;
   readonly nodeEnv?: string | undefined;
@@ -54,6 +58,7 @@ export interface OminityCommerceRouteHandlerConfig {
   readonly debugEnabled?: boolean | undefined;
   readonly sdkHttpClient?: OminityOptions["httpClient"] | undefined;
   readonly paymentMethodsLimit?: number | undefined;
+  readonly paymentMethodIssuersLimit?: number | undefined;
   readonly resolveLanguage?: OminityRequestLanguageResolver | undefined;
   readonly resolveCountry?: OminityRequestCountryResolver | undefined;
 }
@@ -62,6 +67,44 @@ type CookieStore = Awaited<ReturnType<typeof loadNextCookiesStore>>;
 type ItemRouteContext = { params: Promise<{ itemId: string }> };
 type OrderRouteContext = { params: Promise<{ orderId: string }> };
 type PaymentRouteContext = { params: Promise<{ paymentId: string }> };
+type PaymentMethodIssuerRouteContext = {
+  params: Promise<{ paymentMethodId: string; issuerId?: string }>;
+};
+
+export interface OminityCommerceRouteHandlers {
+  readonly GET: (request: Request) => Promise<Response>;
+  readonly POST: (request: Request) => Promise<Response>;
+  readonly PATCH: (request: Request) => Promise<Response>;
+  readonly DELETE: (request: Request) => Promise<Response>;
+}
+
+function normalizedBasePath(value: string | undefined): string {
+  const path = (value ?? "/api/commerce").trim();
+  if (!path.startsWith("/")) {
+    throw new TypeError("Commerce basePath must start with a slash.");
+  }
+  return path.length > 1 ? path.replace(/\/+$/, "") : path;
+}
+
+function commerceRouteSegments(
+  request: Request,
+  basePath: string,
+): ReadonlyArray<string> | null {
+  const pathname = new URL(request.url).pathname.replace(/\/+$/, "") || "/";
+  if (pathname === basePath) return [];
+  if (!pathname.startsWith(`${basePath}/`)) return null;
+  try {
+    return pathname.slice(basePath.length + 1).split("/").map(decodeURIComponent);
+  } catch {
+    return null;
+  }
+}
+
+function commerceRouteNotFound(): Response {
+  const response = jsonError(404, "NOT_FOUND", "Commerce route not found.");
+  response.headers.set("Cache-Control", "no-store");
+  return response;
+}
 
 function resolveBaseUrl(value: string | undefined): string {
   return (value ?? DEFAULT_OMINITY_BASE_URL).replace(/\/$/, "");
@@ -146,6 +189,36 @@ function asString(value: unknown): string | undefined {
   return asNonEmptyString(value);
 }
 
+function invalidMutationOrigin(
+  config: OminityCommerceRouteHandlerConfig,
+  request: Request,
+): Response | null {
+  if (request.headers.get("sec-fetch-site") === "cross-site") {
+    const response = jsonError(
+      403,
+      "INVALID_ORIGIN",
+      "This request must come from the same site.",
+    );
+    response.headers.set("Cache-Control", "no-store");
+    return response;
+  }
+
+  const origin = asNonEmptyString(request.headers.get("origin"));
+  if (!origin) return null;
+  const expectedOrigin = asNonEmptyString(config.siteUrl)
+    ? new URL(config.siteUrl as string).origin
+    : new URL(request.url).origin;
+  if (origin === expectedOrigin) return null;
+
+  const response = jsonError(
+    403,
+    "INVALID_ORIGIN",
+    "This request must come from the same site.",
+  );
+  response.headers.set("Cache-Control", "no-store");
+  return response;
+}
+
 function normalizeStringList(value: unknown): ReadonlyArray<string> | undefined {
   if (!Array.isArray(value)) {
     return undefined;
@@ -187,6 +260,15 @@ function parseQuantity(value: unknown): number | null {
   }
 
   return null;
+}
+
+function positiveInteger(value: unknown): number | null {
+  const parsed = typeof value === "number"
+    ? value
+    : typeof value === "string" && /^\d+$/.test(value)
+      ? Number(value)
+      : Number.NaN;
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
 function normalizeProductId(value: unknown): string | number | null {
@@ -296,14 +378,14 @@ export function createOminityCommerceCartRouteHandlers(
         });
 
         return Response.json(snapshot);
-      } catch (error) {
-        return jsonError(500, "CART_LOAD_FAILED", "Failed to load cart.", {
-          message: error instanceof Error ? error.message : "Unknown error",
-        });
+      } catch {
+        return jsonError(500, "CART_LOAD_FAILED", "Failed to load cart.");
       }
     },
 
     async PATCH(request: Request): Promise<Response> {
+      const originError = invalidMutationOrigin(config, request);
+      if (originError) return originError;
       const cookieStore = await loadNextCookiesStore();
 
       let payload: unknown;
@@ -356,10 +438,8 @@ export function createOminityCommerceCartRouteHandlers(
         });
 
         return Response.json(refreshed);
-      } catch (error) {
-        return jsonError(500, "CART_UPDATE_FAILED", "Failed to update cart.", {
-          message: error instanceof Error ? error.message : "Unknown error",
-        });
+      } catch {
+        return jsonError(500, "CART_UPDATE_FAILED", "Failed to update cart.");
       }
     },
   };
@@ -374,6 +454,8 @@ export function createOminityCommerceCartItemsRouteHandlers(
 
   return {
     async POST(request: Request): Promise<Response> {
+      const originError = invalidMutationOrigin(config, request);
+      if (originError) return originError;
       let payload: unknown;
       try {
         payload = await parseJsonBody(request);
@@ -425,10 +507,8 @@ export function createOminityCommerceCartItemsRouteHandlers(
         });
 
         return Response.json(refreshed);
-      } catch (error) {
-        return jsonError(500, "CART_ITEM_CREATE_FAILED", "Failed to add item to cart.", {
-          message: error instanceof Error ? error.message : "Unknown error",
-        });
+      } catch {
+        return jsonError(500, "CART_ITEM_CREATE_FAILED", "Failed to add item to cart.");
       }
     },
   };
@@ -444,6 +524,8 @@ export function createOminityCommerceCartItemRouteHandlers(
 
   return {
     async PATCH(request: Request, context: ItemRouteContext): Promise<Response> {
+      const originError = invalidMutationOrigin(config, request);
+      if (originError) return originError;
       const { itemId } = await context.params;
       if (!itemId || itemId.trim().length === 0) {
         return jsonError(400, "INVALID_ITEM_ID", "A valid cart item id is required.");
@@ -513,14 +595,14 @@ export function createOminityCommerceCartItemRouteHandlers(
           });
 
         return Response.json(refreshed);
-      } catch (error) {
-        return jsonError(500, "CART_ITEM_UPDATE_FAILED", "Failed to update cart item.", {
-          message: error instanceof Error ? error.message : "Unknown error",
-        });
+      } catch {
+        return jsonError(500, "CART_ITEM_UPDATE_FAILED", "Failed to update cart item.");
       }
     },
 
     async DELETE(request: Request, context: ItemRouteContext): Promise<Response> {
+      const originError = invalidMutationOrigin(config, request);
+      if (originError) return originError;
       const { itemId } = await context.params;
       if (!itemId || itemId.trim().length === 0) {
         return jsonError(400, "INVALID_ITEM_ID", "A valid cart item id is required.");
@@ -557,10 +639,8 @@ export function createOminityCommerceCartItemRouteHandlers(
         });
 
         return Response.json(refreshed);
-      } catch (error) {
-        return jsonError(500, "CART_ITEM_DELETE_FAILED", "Failed to delete cart item.", {
-          message: error instanceof Error ? error.message : "Unknown error",
-        });
+      } catch {
+        return jsonError(500, "CART_ITEM_DELETE_FAILED", "Failed to delete cart item.");
       }
     },
   };
@@ -575,6 +655,8 @@ export function createOminityCommerceCheckoutRouteHandlers(
 
   return {
     async POST(request: Request): Promise<Response> {
+      const originError = invalidMutationOrigin(config, request);
+      if (originError) return originError;
       let payload: unknown;
       try {
         payload = await parseJsonBody(request);
@@ -674,10 +756,8 @@ export function createOminityCommerceCheckoutRouteHandlers(
         return Response.json({
           order,
         });
-      } catch (error) {
-        return jsonError(500, "CHECKOUT_FAILED", "Failed to create order.", {
-          message: error instanceof Error ? error.message : "Unknown error",
-        });
+      } catch {
+        return jsonError(500, "CHECKOUT_FAILED", "Failed to create order.");
       }
     },
   };
@@ -706,16 +786,22 @@ export function createOminityCommerceShippingMethodsRouteHandlers(
       }
 
       try {
+        const cookieStore = await loadNextCookiesStore();
         const language = await getLanguage(request);
-        const methods = await createRouteCommerceClient(config, language).listShippingMethods();
+        const client = createRouteCommerceClient(config, language);
+        const snapshot = await getOrCreateCommerceCartSnapshot({
+          client,
+          cookies: cookieStore,
+          cookieOptions: resolveCartCookieOptions(config),
+          createCartData: await resolveCreateCartData(config, request),
+          cartInclude: CART_INCLUDE,
+          itemsInclude: CART_ITEMS_INCLUDE,
+        });
+        const methods = await client.listCartShippingMethods({ cartId: snapshot.cart.id });
 
-        return Response.json({
-          items: methods,
-        });
-      } catch (error) {
-        return jsonError(500, "SHIPPING_METHODS_FAILED", "Failed to load shipping methods.", {
-          message: error instanceof Error ? error.message : "Unknown error",
-        });
+        return Response.json(methods);
+      } catch {
+        return jsonError(500, "SHIPPING_METHODS_FAILED", "Failed to load shipping methods.");
       }
     },
   };
@@ -763,10 +849,61 @@ export function createOminityCommercePaymentMethodsRouteHandlers(
         return Response.json({
           items: methods,
         });
-      } catch (error) {
-        return jsonError(500, "PAYMENT_METHODS_FAILED", "Failed to load payment methods.", {
-          message: error instanceof Error ? error.message : "Unknown error",
+      } catch {
+        return jsonError(500, "PAYMENT_METHODS_FAILED", "Failed to load payment methods.");
+      }
+    },
+  };
+}
+
+export function createOminityCommercePaymentMethodIssuersRouteHandlers(
+  config: OminityCommerceRouteHandlerConfig,
+): {
+  readonly GET: (request: Request, context: PaymentMethodIssuerRouteContext) => Promise<Response>;
+} {
+  const getLanguage = createRequestLanguageResolver(config.resolveLanguage);
+
+  return {
+    async GET(request: Request, context: PaymentMethodIssuerRouteContext): Promise<Response> {
+      const { paymentMethodId: rawPaymentMethodId, issuerId: rawIssuerId } = await context.params;
+      const paymentMethodId = positiveInteger(rawPaymentMethodId);
+      const issuerId = typeof rawIssuerId === "undefined" ? undefined : positiveInteger(rawIssuerId);
+      if (!paymentMethodId || (typeof rawIssuerId !== "undefined" && !issuerId)) {
+        return jsonError(400, "INVALID_PAYMENT_METHOD_ISSUER_ID", "Payment method and issuer ids must be positive integers.");
+      }
+
+      if (config.useMockData) {
+        const issuer = {
+          resource: "paymentmethod_issuer",
+          id: issuerId ?? 1,
+          paymentmethodId: paymentMethodId,
+          issuer: "mock",
+          name: "Mock issuer",
+          icon: null,
+          isEnabled: true,
+          updatedAt: new Date().toISOString(),
+          createdAt: new Date().toISOString(),
+        };
+        return Response.json(typeof issuerId === "number" ? { issuer } : { items: [issuer], mode: "mock" });
+      }
+
+      try {
+        const language = await getLanguage(request);
+        const client = createRouteCommerceClient(config, language);
+        if (typeof issuerId === "number") {
+          const issuer = await client.getPaymentMethodIssuer({ methodId: paymentMethodId, id: issuerId });
+          return issuer
+            ? Response.json({ issuer })
+            : jsonError(404, "PAYMENT_METHOD_ISSUER_NOT_FOUND", "Payment method issuer was not found.");
+        }
+        const issuers = await client.listPaymentMethodIssuers({
+          methodId: paymentMethodId,
+          page: 1,
+          limit: config.paymentMethodIssuersLimit ?? 100,
         });
+        return Response.json({ items: issuers });
+      } catch {
+        return jsonError(500, "PAYMENT_METHOD_ISSUERS_FAILED", "Failed to load payment method issuers.");
       }
     },
   };
@@ -821,6 +958,7 @@ export function createOminityCommerceOrderPaymentsRouteHandlers(
   config: OminityCommerceRouteHandlerConfig,
 ): {
   readonly GET: (request: Request, context: OrderRouteContext) => Promise<Response>;
+  readonly POST: (request: Request, context: OrderRouteContext) => Promise<Response>;
 } {
   const getLanguage = createRequestLanguageResolver(config.resolveLanguage);
 
@@ -847,10 +985,50 @@ export function createOminityCommerceOrderPaymentsRouteHandlers(
         return Response.json({
           items: payments,
         });
-      } catch (error) {
-        return jsonError(500, "ORDER_PAYMENTS_FAILED", "Failed to load order payments.", {
-          message: error instanceof Error ? error.message : "Unknown error",
+      } catch {
+        return jsonError(500, "ORDER_PAYMENTS_FAILED", "Failed to load order payments.");
+      }
+    },
+
+    async POST(request: Request, context: OrderRouteContext): Promise<Response> {
+      const originError = invalidMutationOrigin(config, request);
+      if (originError) return originError;
+      const { orderId } = await context.params;
+      if (!orderId || orderId.trim().length === 0) {
+        return jsonError(400, "INVALID_ORDER_ID", "A valid order id is required.");
+      }
+      let payload: unknown;
+      try {
+        payload = await parseJsonBody(request);
+      } catch {
+        return jsonError(400, "INVALID_JSON", "Request body must be valid JSON.");
+      }
+      const record = asObjectRecord(payload);
+      const data = asObjectRecord(record?.data) ?? record;
+      if (!data) {
+        return jsonError(400, "INVALID_PAYMENT", "Request body must contain payment data.");
+      }
+
+      if (config.useMockData) {
+        const payment = mockCreateOrderPayment(orderId, data);
+        return payment
+          ? Response.json({ payment, mode: "mock" }, { status: 201 })
+          : jsonError(404, "ORDER_NOT_FOUND", "Order was not found.");
+      }
+
+      try {
+        const language = await getLanguage(request);
+        const idempotencyKey = asNonEmptyString(request.headers.get("idempotency-key"));
+        const payment = await createRouteCommerceClient(config, language).createOrderPayment({
+          orderId,
+          data: data as CreateOrderPaymentRequest["data"],
+          ...(idempotencyKey ? {
+            requestOptions: { headers: { "Idempotency-Key": idempotencyKey } },
+          } : {}),
         });
+        return Response.json({ payment }, { status: 201 });
+      } catch {
+        return jsonError(500, "ORDER_PAYMENT_CREATE_FAILED", "Failed to create the order payment.");
       }
     },
   };
@@ -899,4 +1077,121 @@ export function createOminityCommercePaymentRouteHandlers(
       }
     },
   };
+}
+
+/**
+ * Creates one optional catch-all App Router endpoint for the complete commerce
+ * browser surface. The smaller route factories remain available when a project
+ * wants separate route files or a narrower public surface.
+ */
+export function createOminityCommerceRouteHandlers(
+  config: OminityCommerceRouteHandlerConfig,
+): OminityCommerceRouteHandlers {
+  const basePath = normalizedBasePath(config.basePath);
+  const cart = createOminityCommerceCartRouteHandlers(config);
+  const cartItems = createOminityCommerceCartItemsRouteHandlers(config);
+  const cartItem = createOminityCommerceCartItemRouteHandlers(config);
+  const checkout = createOminityCommerceCheckoutRouteHandlers(config);
+  const shippingMethods = createOminityCommerceShippingMethodsRouteHandlers(config);
+  const paymentMethods = createOminityCommercePaymentMethodsRouteHandlers(config);
+  const paymentMethodIssuers = createOminityCommercePaymentMethodIssuersRouteHandlers(config);
+  const order = createOminityCommerceOrderRouteHandlers(config);
+  const orderPayments = createOminityCommerceOrderPaymentsRouteHandlers(config);
+  const payment = createOminityCommercePaymentRouteHandlers(config);
+
+  const GET = async (request: Request): Promise<Response> => {
+    const segments = commerceRouteSegments(request, basePath);
+    if (!segments) return commerceRouteNotFound();
+    if (segments.length === 1 && segments[0] === "cart") return cart.GET(request);
+    if (segments.length === 1 && segments[0] === "shipping-methods") {
+      return shippingMethods.GET(request);
+    }
+    if (segments.length === 1 && segments[0] === "payment-methods") {
+      return paymentMethods.GET(request);
+    }
+    if (
+      (segments.length === 3 || segments.length === 4)
+      && segments[0] === "payment-methods"
+      && segments[2] === "issuers"
+      && segments[1]
+    ) {
+      return paymentMethodIssuers.GET(request, {
+        params: Promise.resolve({
+          paymentMethodId: segments[1],
+          ...(segments[3] ? { issuerId: segments[3] } : {}),
+        }),
+      });
+    }
+    if (segments.length === 2 && segments[0] === "orders" && segments[1]) {
+      return order.GET(request, { params: Promise.resolve({ orderId: segments[1] }) });
+    }
+    if (
+      segments.length === 3
+      && segments[0] === "orders"
+      && segments[1]
+      && segments[2] === "payments"
+    ) {
+      return orderPayments.GET(request, {
+        params: Promise.resolve({ orderId: segments[1] }),
+      });
+    }
+    if (segments.length === 2 && segments[0] === "payments" && segments[1]) {
+      return payment.GET(request, { params: Promise.resolve({ paymentId: segments[1] }) });
+    }
+    return commerceRouteNotFound();
+  };
+
+  const POST = async (request: Request): Promise<Response> => {
+    const segments = commerceRouteSegments(request, basePath);
+    if (!segments) return commerceRouteNotFound();
+    if (segments.length === 2 && segments[0] === "cart" && segments[1] === "items") {
+      return cartItems.POST(request);
+    }
+    if (segments.length === 1 && segments[0] === "checkout") return checkout.POST(request);
+    if (
+      segments.length === 3
+      && segments[0] === "orders"
+      && segments[1]
+      && segments[2] === "payments"
+    ) {
+      return orderPayments.POST(request, {
+        params: Promise.resolve({ orderId: segments[1] }),
+      });
+    }
+    return commerceRouteNotFound();
+  };
+
+  const PATCH = async (request: Request): Promise<Response> => {
+    const segments = commerceRouteSegments(request, basePath);
+    if (!segments) return commerceRouteNotFound();
+    if (segments.length === 1 && segments[0] === "cart") return cart.PATCH(request);
+    if (
+      segments.length === 3
+      && segments[0] === "cart"
+      && segments[1] === "items"
+      && segments[2]
+    ) {
+      return cartItem.PATCH(request, {
+        params: Promise.resolve({ itemId: segments[2] }),
+      });
+    }
+    return commerceRouteNotFound();
+  };
+
+  const DELETE = async (request: Request): Promise<Response> => {
+    const segments = commerceRouteSegments(request, basePath);
+    if (
+      segments?.length === 3
+      && segments[0] === "cart"
+      && segments[1] === "items"
+      && segments[2]
+    ) {
+      return cartItem.DELETE(request, {
+        params: Promise.resolve({ itemId: segments[2] }),
+      });
+    }
+    return commerceRouteNotFound();
+  };
+
+  return { GET, POST, PATCH, DELETE };
 }

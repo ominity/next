@@ -380,6 +380,22 @@ export interface OminityDebugUtilitiesInfo {
   readonly details?: Readonly<Record<string, unknown>>;
 }
 
+export interface OminityDebugSnapshot {
+  readonly integration?: OminityDebugIntegrationInfo;
+  readonly health?: OminityDebugConfigHealthInfo;
+  readonly channel?: OminityDebugChannelInfo;
+  readonly rendering?: OminityDebugRenderingInfo;
+  readonly cache?: OminityDebugCacheInfo;
+  readonly auth?: OminityDebugAuthInfo | false;
+  readonly customer?: OminityDebugCustomerInfo | false;
+  readonly commerce?: OminityDebugCommerceInfo;
+  readonly forms?: OminityDebugFormsInfo;
+  readonly tracking?: OminityDebugTrackingInfo;
+  readonly utilities?: OminityDebugUtilitiesInfo;
+}
+
+export type OminityDebugCapability = keyof OminityDebugSnapshot;
+
 export interface OminityDebugCustomerMembership {
   readonly customerId?: string | number;
   readonly userId?: string | number;

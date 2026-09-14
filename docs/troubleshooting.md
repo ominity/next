@@ -31,100 +31,61 @@ Render the bar from a client component:
 ```tsx
 "use client";
 
-import { OminityDebugBar } from "@ominity/next/debug";
-import { useOminityAuth } from "@ominity/next/auth/react";
-import { useOminityCustomerAccounts } from "@ominity/next/customer-accounts/react";
+import { OminityAuthProvider } from "@ominity/next/auth/react";
+import { OminityCommerceProvider } from "@ominity/next/commerce/react";
+import { OminityCustomerAccountsProvider } from "@ominity/next/customer-accounts/react";
+import { OminityDebugBar, OminityDebugProvider } from "@ominity/next/debug";
+import { TrackingProvider } from "@ominity/next/tracking/provider";
 
-export function OminityDebugTools() {
-  const auth = useOminityAuth();
-  const customer = useOminityCustomerAccounts();
+export function Providers({ children }: { children: React.ReactNode }) {
+  const debugEnabled = process.env.NODE_ENV !== "production";
 
   return (
-    <OminityDebugBar
-      enabled={process.env.NODE_ENV !== "production"}
-      integration={{
-        appName: "Storefront",
-        environment: process.env.NODE_ENV,
-        debugBar: true,
-      }}
-      health={{
-        mode: "live",
-        environment: process.env.NODE_ENV,
-        apiUrl: process.env.NEXT_PUBLIC_OMINITY_API_URL,
-        localeSegmentStrategy: "language",
-        checks: [
-          { label: "API URL", status: "enabled" },
-          { label: "Channel", status: "unknown", severity: "warning" },
-        ],
-      }}
-      auth={{
-        ready: auth.ready,
-        authenticated: !!auth.session,
-        session: auth.session,
-        mfaVerified: auth.mfaVerified,
-        mfaMethods: auth.mfaMethods,
-        savedAddressCount: auth.savedAddresses.length,
-        actions: {
-          refresh: auth.refreshAuth,
-          signIn: auth.signIn,
-          signOut: auth.signOut,
+    <OminityDebugProvider
+      enabled={debugEnabled}
+      initialSnapshot={{
+        integration: {
+          appName: "Storefront",
+          environment: process.env.NODE_ENV,
+          debugBar: true,
+        },
+        health: {
+          mode: "live",
+          environment: process.env.NODE_ENV,
+          apiUrl: process.env.NEXT_PUBLIC_OMINITY_API_URL,
+          localeSegmentStrategy: "language",
+          checks: [
+            { label: "API URL", status: "enabled" },
+            { label: "Channel", status: "unknown", severity: "warning" },
+          ],
         },
       }}
-      customer={{
-        ready: customer.ready,
-        loading: customer.loading,
-        activeCustomerId: customer.activeCustomerId,
-        activeMembership: customer.activeMembership,
-        memberships: customer.memberships,
-        memberCount: customer.members?.count,
-        invitationCount: customer.invitations?.count,
-        pendingMutations: Array.from(customer.pendingMutations),
-        actions: {
-          refresh: customer.refreshContext,
-          switchCustomer: customer.switchCustomer,
-        },
-      }}
-      rendering={{
-        nextRoute: "/[locale]/products/[slug]",
-        incomingPath: "/en/products/desk-lamp",
-        resolvedCmsPath: "/products/desk-lamp",
-        cmsPage: {
-          id: "page_123",
-          slug: "desk-lamp",
-          locale: "en",
-          status: "published",
-        },
-      }}
-      cache={{
-        enabled: true,
-        routeRevalidateSeconds: 300,
-        entries: [
-          {
-            key: "cms:routes:en",
-            resource: "routes",
-            status: "hit",
-            scope: "memory",
-          },
-        ],
-      }}
-      commerce={{
-        visitorId: "visitor-id",
-        cartId: "cart-id",
-        currency: "EUR",
-        country: "BE",
-      }}
-      forms={{
-        submissionEndpoint: "/api/forms/submit",
-        uploadPresignEndpoint: "/api/forms/uploads/presign",
-      }}
-      tracking={{
-        visitorId: "visitor-id",
-        proxyEndpoint: "/api/omt",
-      }}
-    />
+    >
+      <OminityAuthProvider>
+        <OminityCustomerAccountsProvider>
+          <OminityCommerceProvider>
+            <TrackingProvider>
+              {children}
+              <OminityDebugBar enabled={debugEnabled} />
+            </TrackingProvider>
+          </OminityCommerceProvider>
+        </OminityCustomerAccountsProvider>
+      </OminityAuthProvider>
+    </OminityDebugProvider>
   );
 }
 ```
+
+The debug bar uses `OminityDebugProvider` as a tiny capability registry.
+`OminityAuthProvider`, `OminityCustomerAccountsProvider`,
+`OminityCommerceProvider`, and `TrackingProvider` auto-register when present.
+If a project deletes or does not use commerce, auth, customer accounts, CMS page
+rendering, or forms, do not render that provider and the related tab is omitted.
+You can still pass manual props to `OminityDebugBar` or call
+`useOminityDebugCapability()` from an app-owned adapter for project-specific
+CMS rendering, cache, forms, or spoof-user actions. Explicit bar props override
+registered values, and `auth={false}` or `customer={false}` can hide those
+surfaces.
 
 To capture SDK calls, pass a debug HTTP client into the SDK configuration. Add a
 request context when you want the bar to group calls by the current page request,

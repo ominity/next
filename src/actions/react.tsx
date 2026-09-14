@@ -46,6 +46,26 @@ export interface UseOminityMutationResult<TInput, TResult> {
 
 function normalizedError(error: unknown): OminityActionError {
   if (error instanceof OminityActionError) return error;
+  if (typeof error === "object" && error !== null) {
+    const structured = error as {
+      readonly message?: unknown;
+      readonly status?: unknown;
+      readonly code?: unknown;
+      readonly details?: unknown;
+    };
+    if (
+      typeof structured.message === "string"
+      && typeof structured.status === "number"
+      && typeof structured.code === "string"
+    ) {
+      return new OminityActionError(
+        structured.message,
+        structured.status,
+        structured.code,
+        structured.details,
+      );
+    }
+  }
   return new OminityActionError(
     "The operation could not be completed.",
     0,

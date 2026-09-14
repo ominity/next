@@ -8,10 +8,19 @@ import type {
   CustomerInvitationListOptions,
   CustomerMemberListOptions,
   CustomerRoleListOptions,
+  Address,
+  Customer,
+  CustomerGroup,
   CustomerUser,
   CustomerUserInvitation,
   CustomerUserPermissionCatalog,
   CustomerUserRole,
+  Invoice,
+  Mandate,
+  Order,
+  Payment,
+  Product,
+  Subscription,
   UpdateCustomerMemberRoleInput,
 } from "./types.js";
 import type { Paginated } from "@ominity/api-typescript/models";
@@ -71,6 +80,34 @@ function queryString(input: Readonly<Record<string, string | number | undefined>
   return query.length > 0 ? `?${query}` : "";
 }
 
+function appendQueryValue(params: URLSearchParams, key: string, value: unknown): void {
+  if (typeof value === "undefined") return;
+  if (value === null) {
+    params.append(key, "");
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) appendQueryValue(params, key, item);
+    return;
+  }
+  if (typeof value === "object") {
+    for (const [childKey, childValue] of Object.entries(value as Record<string, unknown>)) {
+      appendQueryValue(params, `${key}[${childKey}]`, childValue);
+    }
+    return;
+  }
+  params.append(key, String(value));
+}
+
+function resourceQueryString(input: Readonly<Record<string, unknown>> | undefined): string {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(input ?? {})) {
+    appendQueryValue(params, key, value);
+  }
+  const query = params.toString();
+  return query.length > 0 ? `?${query}` : "";
+}
+
 async function responsePayload(response: Response): Promise<unknown> {
   if (response.status === 204) {
     return null;
@@ -90,6 +127,10 @@ async function responsePayload(response: Response): Promise<unknown> {
   } catch {
     return null;
   }
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === "AbortError";
 }
 
 export function createCustomerAccountsClient(
@@ -119,13 +160,23 @@ export function createCustomerAccountsClient(
     }
     headers.set("Accept", "application/json");
 
-    const response = await fetchImpl(`${basePath}${path}`, {
-      ...init,
-      headers,
-      ...(requestOptions.signal ? { signal: requestOptions.signal } : {}),
-      cache: "no-store",
-      credentials: "same-origin",
-    });
+    let response: Response;
+    try {
+      response = await fetchImpl(`${basePath}${path}`, {
+        ...init,
+        headers,
+        ...(requestOptions.signal ? { signal: requestOptions.signal } : {}),
+        cache: "no-store",
+        credentials: "same-origin",
+      });
+    } catch (error) {
+      if (isAbortError(error)) throw error;
+      throw new CustomerAccountsError(
+        "The request could not reach the application.",
+        0,
+        "NETWORK_ERROR",
+      );
+    }
     const payload = await responsePayload(response);
     if (!response.ok) {
       throw customerAccountsErrorFromResponse(response, payload);
@@ -134,7 +185,198 @@ export function createCustomerAccountsClient(
     return payload as T;
   };
 
+  const requestBytes = async (
+    path: string,
+    requestOptions: CustomerAccountsRequestOptions = {},
+  ): Promise<Uint8Array> => {
+    const headers = new Headers(requestOptions.headers);
+    headers.set("Accept", "application/pdf");
+    let response: Response;
+    try {
+      response = await fetchImpl(`${basePath}${path}`, {
+        method: "GET",
+        headers,
+        ...(requestOptions.signal ? { signal: requestOptions.signal } : {}),
+        cache: "no-store",
+        credentials: "same-origin",
+      });
+    } catch (error) {
+      if (isAbortError(error)) throw error;
+      throw new CustomerAccountsError(
+        "The request could not reach the application.",
+        0,
+        "NETWORK_ERROR",
+      );
+    }
+    if (!response.ok) {
+      throw customerAccountsErrorFromResponse(response, await responsePayload(response));
+    }
+    return new Uint8Array(await response.arrayBuffer());
+  };
+
   return {
+    customer: {
+      get(input = {}, requestOptions) {
+        return request<Customer>(`/customer${resourceQueryString(input)}`, {}, requestOptions);
+      },
+      update(data, requestOptions) {
+        return request<Customer>("/customer", {
+          method: "PATCH",
+          body: JSON.stringify(data),
+        }, requestOptions);
+      },
+    },
+
+    addresses: {
+      list(input = {}, requestOptions) {
+        return request<Paginated<Address>>(
+          `/addresses${resourceQueryString(input)}`,
+          {},
+          requestOptions,
+        );
+      },
+      get(id, requestOptions) {
+        return request<Address>(`/addresses/${positiveInteger(id, "addressId")}`, {}, requestOptions);
+      },
+      create(data, requestOptions) {
+        return request<Address>("/addresses", {
+          method: "POST",
+          body: JSON.stringify(data),
+        }, requestOptions);
+      },
+      update(id, data, requestOptions) {
+        return request<Address>(`/addresses/${positiveInteger(id, "addressId")}`, {
+          method: "PATCH",
+          body: JSON.stringify(data),
+        }, requestOptions);
+      },
+      async remove(id, requestOptions) {
+        await request<null>(`/addresses/${positiveInteger(id, "addressId")}`, {
+          method: "DELETE",
+        }, requestOptions);
+      },
+    },
+
+    groups: {
+      list(input = {}, requestOptions) {
+        return request<Paginated<CustomerGroup>>(
+          `/groups${resourceQueryString(input)}`,
+          {},
+          requestOptions,
+        );
+      },
+      get(id, input = {}, requestOptions) {
+        return request<CustomerGroup>(
+          `/groups/${positiveInteger(id, "groupId")}${resourceQueryString(input)}`,
+          {},
+          requestOptions,
+        );
+      },
+    },
+
+    mandates: {
+      list(input = {}, requestOptions) {
+        return request<Paginated<Mandate>>(
+          `/mandates${resourceQueryString(input)}`,
+          {},
+          requestOptions,
+        );
+      },
+      get(id, requestOptions) {
+        return request<Mandate>(`/mandates/${positiveInteger(id, "mandateId")}`, {}, requestOptions);
+      },
+    },
+
+    payments: {
+      list(input = {}, requestOptions) {
+        return request<Paginated<Payment>>(
+          `/payments${resourceQueryString(input)}`,
+          {},
+          requestOptions,
+        );
+      },
+      get(id, requestOptions) {
+        return request<Payment>(`/payments/${positiveInteger(id, "paymentId")}`, {}, requestOptions);
+      },
+      create(data, input = {}, requestOptions) {
+        return request<Payment>(`/payments${resourceQueryString(input)}`, {
+          method: "POST",
+          body: JSON.stringify(data),
+        }, requestOptions);
+      },
+    },
+
+    orders: {
+      list(input = {}, requestOptions) {
+        return request<Paginated<Order>>(`/orders${resourceQueryString(input)}`, {}, requestOptions);
+      },
+      get(id, input = {}, requestOptions) {
+        return request<Order>(
+          `/orders/${positiveInteger(id, "orderId")}${resourceQueryString(input)}`,
+          {},
+          requestOptions,
+        );
+      },
+      create(data, requestOptions) {
+        return request<Order>("/orders", {
+          method: "POST",
+          body: JSON.stringify(data),
+        }, requestOptions);
+      },
+    },
+
+    invoices: {
+      list(input = {}, requestOptions) {
+        return request<Paginated<Invoice>>(`/invoices${resourceQueryString(input)}`, {}, requestOptions);
+      },
+      get(id, input = {}, requestOptions) {
+        return request<Invoice>(
+          `/invoices/${positiveInteger(id, "invoiceId")}${resourceQueryString(input)}`,
+          {},
+          requestOptions,
+        );
+      },
+      downloadPdf(id, requestOptions) {
+        return requestBytes(`/invoices/${positiveInteger(id, "invoiceId")}/pdf`, requestOptions);
+      },
+    },
+
+    subscriptions: {
+      list(input = {}, requestOptions) {
+        return request<Paginated<Subscription>>(
+          `/subscriptions${resourceQueryString(input)}`,
+          {},
+          requestOptions,
+        );
+      },
+      get(id, input = {}, requestOptions) {
+        return request<Subscription>(
+          `/subscriptions/${positiveInteger(id, "subscriptionId")}${resourceQueryString(input)}`,
+          {},
+          requestOptions,
+        );
+      },
+      async remove(id, requestOptions) {
+        await request<null>(`/subscriptions/${positiveInteger(id, "subscriptionId")}`, {
+          method: "DELETE",
+        }, requestOptions);
+      },
+      listTransitionProducts(subscriptionId, input = {}, requestOptions) {
+        return request<Paginated<Product>>(
+          `/subscriptions/${positiveInteger(subscriptionId, "subscriptionId")}/transition-products${resourceQueryString(input)}`,
+          {},
+          requestOptions,
+        );
+      },
+      getTransitionProduct(subscriptionId, productId, input = {}, requestOptions) {
+        return request<Product>(
+          `/subscriptions/${positiveInteger(subscriptionId, "subscriptionId")}/transition-products/${positiveInteger(productId, "productId")}${resourceQueryString(input)}`,
+          {},
+          requestOptions,
+        );
+      },
+    },
+
     getContext(requestOptions) {
       return request<CustomerAccountContext>("", {}, requestOptions);
     },

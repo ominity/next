@@ -15,7 +15,11 @@ import {
   parseJsonBody,
   type MaybePromise,
 } from "../../server/route-utils.js";
-import { selectCustomerMembership } from "../permissions.js";
+import {
+  CUSTOMER_PERMISSIONS,
+  hasCustomerPermission,
+  selectCustomerMembership,
+} from "../permissions.js";
 import type { CustomerAccountContext } from "../types.js";
 import {
   clearActiveCustomerId,
@@ -26,10 +30,26 @@ import {
   resolveActiveCustomerCookieOptions,
   resolveOminityActiveCustomerMembership,
 } from "./context.js";
+import {
+  handleCustomerAccountResourceDelete,
+  handleCustomerAccountResourceGet,
+  handleCustomerAccountResourcePatch,
+  handleCustomerAccountResourcePost,
+} from "./resources.js";
 
 const DEFAULT_BASE_PATH = "/api/customer-accounts";
 const MAX_PAGE_LIMIT = 250;
 const MAX_MEMBERSHIP_PAGES = 100;
+const CUSTOMER_RESOURCE_ROUTES = new Set([
+  "customer",
+  "addresses",
+  "groups",
+  "mandates",
+  "payments",
+  "orders",
+  "invoices",
+  "subscriptions",
+]);
 
 export interface ResolveCustomerInvitationAcceptUrlInput {
   readonly request: Request;
@@ -85,28 +105,58 @@ function noStoreJson(body: unknown, status = 200): Response {
   });
 }
 
-function errorStatus(error: unknown): number {
-  if (typeof error !== "object" || error === null) {
+function noStore(response: Response): Response {
+  response.headers.set("Cache-Control", "no-store");
+  return response;
+}
+
+function invalidMutationOrigin(
+  config: OminityCustomerAccountsRouteHandlerConfig,
+  request: Request,
+): Response | null {
+  if (request.headers.get("sec-fetch-site") === "cross-site") {
+    return noStore(jsonError(403, "INVALID_ORIGIN", "This request must come from the same site."));
+  }
+  const origin = asNonEmptyString(request.headers.get("origin"));
+  if (!origin) return null;
+  const expected = asNonEmptyString(config.siteUrl)
+    ? new URL(config.siteUrl as string).origin
+    : new URL(request.url).origin;
+  return origin === expected
+    ? null
+    : noStore(jsonError(403, "INVALID_ORIGIN", "This request must come from the same site."));
+}
+
+function errorStatus(error: unknown, depth = 0): number {
+  if (depth > 4 || typeof error !== "object" || error === null) {
     return 502;
   }
 
-  const record = error as { status?: unknown; statusCode?: unknown };
+  const record = error as {
+    status?: unknown;
+    statusCode?: unknown;
+    rawResponse?: unknown;
+    response?: unknown;
+    cause?: unknown;
+  };
   const status = typeof record.status === "number"
     ? record.status
     : typeof record.statusCode === "number"
       ? record.statusCode
-      : 502;
-  return status >= 400 && status <= 599 ? status : 502;
+      : record.rawResponse instanceof Response
+        ? record.rawResponse.status
+        : record.response instanceof Response
+          ? record.response.status
+          : undefined;
+  if (typeof status === "number" && status >= 400 && status <= 599) return status;
+  return errorStatus(record.cause, depth + 1);
 }
 
 function errorResponse(error: unknown, fallbackCode: string, fallbackMessage: string): Response {
   const status = errorStatus(error);
   const record = typeof error === "object" && error !== null
-    ? error as { detail?: unknown; fields?: unknown }
+    ? error as { fields?: unknown }
     : null;
-  const message = typeof record?.detail === "string" && record.detail.length > 0
-    ? record.detail
-    : fallbackMessage;
   const code = status === 401
     ? "UNAUTHENTICATED"
     : status === 403
@@ -117,16 +167,18 @@ function errorResponse(error: unknown, fallbackCode: string, fallbackMessage: st
           ? "CONFLICT"
           : status === 422
             ? "VALIDATION_FAILED"
-            : fallbackCode;
+            : status === 429
+              ? "RATE_LIMITED"
+              : fallbackCode;
 
-  return jsonError(
+  return noStore(jsonError(
     status,
     code,
-    message,
+    fallbackMessage,
     typeof record?.fields === "object" && record.fields !== null
       ? { fields: record.fields }
       : undefined,
-  );
+  ));
 }
 
 function positiveInteger(value: unknown): number | null {
@@ -253,9 +305,22 @@ async function loadCustomerContext(
 async function requireActiveCustomer(
   config: OminityCustomerAccountsRouteHandlerConfig,
   auth: Exclude<Awaited<ReturnType<typeof authenticated>>, Response>,
+  permission?: string,
 ): Promise<number | Response> {
   const active = await resolveOminityActiveCustomerMembership(config, auth);
-  return active instanceof Response ? active : active.customerId;
+  if (active instanceof Response) return active;
+  if (
+    permission
+    && !active.membership.isOwner
+    && !hasCustomerPermission(active.membership, permission)
+  ) {
+    return noStore(jsonError(
+      403,
+      "MISSING_CUSTOMER_PERMISSION",
+      "You do not have permission to perform this customer action.",
+    ));
+  }
+  return active.customerId;
 }
 
 async function requestRecord(request: Request): Promise<Record<string, unknown> | Response> {
@@ -308,8 +373,24 @@ export function createOminityCustomerAccountsRouteHandlers(
         return noStoreJson(await loadCustomerContext(config, auth));
       }
 
+      if (segments[0] && CUSTOMER_RESOURCE_ROUTES.has(segments[0])) {
+        const active = await resolveOminityActiveCustomerMembership(config, auth);
+        if (active instanceof Response) return active;
+        return await handleCustomerAccountResourceGet({
+          request,
+          segments,
+          sdk: auth.sdk,
+          customerId: active.customerId,
+          membership: active.membership,
+        }) ?? jsonError(404, "NOT_FOUND", "Customer account route not found.");
+      }
+
       if (segments.length === 1 && segments[0] === "members") {
-        const customerId = await requireActiveCustomer(config, auth);
+        const customerId = await requireActiveCustomer(
+          config,
+          auth,
+          CUSTOMER_PERMISSIONS.usersView,
+        );
         if (customerId instanceof Response) {
           return customerId;
         }
@@ -328,7 +409,11 @@ export function createOminityCustomerAccountsRouteHandlers(
       }
 
       if (segments[0] === "invitations") {
-        const customerId = await requireActiveCustomer(config, auth);
+        const customerId = await requireActiveCustomer(
+          config,
+          auth,
+          CUSTOMER_PERMISSIONS.usersView,
+        );
         if (customerId instanceof Response) {
           return customerId;
         }
@@ -369,6 +454,12 @@ export function createOminityCustomerAccountsRouteHandlers(
       }
 
       if (segments.length === 1 && segments[0] === "roles") {
+        const customerId = await requireActiveCustomer(
+          config,
+          auth,
+          CUSTOMER_PERMISSIONS.usersView,
+        );
+        if (customerId instanceof Response) return customerId;
         const options = pageOptions(request);
         if (options instanceof Response) {
           return options;
@@ -380,6 +471,12 @@ export function createOminityCustomerAccountsRouteHandlers(
       }
 
       if (segments.length === 1 && segments[0] === "permissions") {
+        const customerId = await requireActiveCustomer(
+          config,
+          auth,
+          CUSTOMER_PERMISSIONS.usersView,
+        );
+        if (customerId instanceof Response) return customerId;
         return noStoreJson(await auth.sdk.commerce.customerUserPermissions.list());
       }
 
@@ -394,6 +491,8 @@ export function createOminityCustomerAccountsRouteHandlers(
     if (segments === null) {
       return jsonError(404, "NOT_FOUND", "Customer account route not found.");
     }
+    const originError = invalidMutationOrigin(config, request);
+    if (originError) return originError;
 
     if (segments.length === 2 && segments[0] === "invitations" && segments[1] === "inspect") {
       const record = await requestRecord(request);
@@ -420,6 +519,18 @@ export function createOminityCustomerAccountsRouteHandlers(
     }
 
     try {
+      if (segments[0] && CUSTOMER_RESOURCE_ROUTES.has(segments[0])) {
+        const active = await resolveOminityActiveCustomerMembership(config, auth);
+        if (active instanceof Response) return active;
+        return await handleCustomerAccountResourcePost({
+          request,
+          segments,
+          sdk: auth.sdk,
+          customerId: active.customerId,
+          membership: active.membership,
+        }) ?? jsonError(404, "NOT_FOUND", "Customer account route not found.");
+      }
+
       if (segments.length === 1 && segments[0] === "switch") {
         const record = await requestRecord(request);
         if (record instanceof Response) {
@@ -444,7 +555,11 @@ export function createOminityCustomerAccountsRouteHandlers(
       }
 
       if (segments.length === 1 && segments[0] === "invitations") {
-        const customerId = await requireActiveCustomer(config, auth);
+        const customerId = await requireActiveCustomer(
+          config,
+          auth,
+          CUSTOMER_PERMISSIONS.usersManage,
+        );
         if (customerId instanceof Response) {
           return customerId;
         }
@@ -499,7 +614,31 @@ export function createOminityCustomerAccountsRouteHandlers(
 
   const PATCH = async (request: Request): Promise<Response> => {
     const segments = routeSegments(request, basePath);
-    if (!segments || segments.length !== 2 || segments[0] !== "members") {
+    if (!segments) {
+      return jsonError(404, "NOT_FOUND", "Customer account route not found.");
+    }
+    const originError = invalidMutationOrigin(config, request);
+    if (originError) return originError;
+
+    if (segments[0] && CUSTOMER_RESOURCE_ROUTES.has(segments[0])) {
+      const auth = await authenticated(config, request);
+      if (auth instanceof Response) return auth;
+      try {
+        const active = await resolveOminityActiveCustomerMembership(config, auth);
+        if (active instanceof Response) return active;
+        return await handleCustomerAccountResourcePatch({
+          request,
+          segments,
+          sdk: auth.sdk,
+          customerId: active.customerId,
+          membership: active.membership,
+        }) ?? jsonError(404, "NOT_FOUND", "Customer account route not found.");
+      } catch (error) {
+        return errorResponse(error, "CUSTOMER_ACCOUNT_MUTATION_FAILED", "Customer account operation failed.");
+      }
+    }
+
+    if (segments.length !== 2 || segments[0] !== "members") {
       return jsonError(404, "NOT_FOUND", "Customer account route not found.");
     }
     const userId = positiveInteger(segments[1]);
@@ -511,7 +650,11 @@ export function createOminityCustomerAccountsRouteHandlers(
     if (auth instanceof Response) {
       return auth;
     }
-    const customerId = await requireActiveCustomer(config, auth);
+    const customerId = await requireActiveCustomer(
+      config,
+      auth,
+      CUSTOMER_PERMISSIONS.usersManage,
+    );
     if (customerId instanceof Response) {
       return customerId;
     }
@@ -537,9 +680,33 @@ export function createOminityCustomerAccountsRouteHandlers(
 
   const DELETE = async (request: Request): Promise<Response> => {
     const segments = routeSegments(request, basePath);
+    if (!segments) {
+      return jsonError(404, "NOT_FOUND", "Customer account route not found.");
+    }
+    const originError = invalidMutationOrigin(config, request);
+    if (originError) return originError;
+
+    if (segments[0] && CUSTOMER_RESOURCE_ROUTES.has(segments[0])) {
+      const auth = await authenticated(config, request);
+      if (auth instanceof Response) return auth;
+      try {
+        const active = await resolveOminityActiveCustomerMembership(config, auth);
+        if (active instanceof Response) return active;
+        return await handleCustomerAccountResourceDelete({
+          request,
+          segments,
+          sdk: auth.sdk,
+          customerId: active.customerId,
+          membership: active.membership,
+        }) ?? jsonError(404, "NOT_FOUND", "Customer account route not found.");
+      } catch (error) {
+        return errorResponse(error, "CUSTOMER_ACCOUNT_MUTATION_FAILED", "Customer account operation failed.");
+      }
+    }
+
     const isMember = segments?.length === 2 && segments[0] === "members";
     const isInvitation = segments?.length === 2 && segments[0] === "invitations";
-    if (!segments || (!isMember && !isInvitation)) {
+    if (!isMember && !isInvitation) {
       return jsonError(404, "NOT_FOUND", "Customer account route not found.");
     }
     const resourceId = positiveInteger(segments[1]);
@@ -551,7 +718,11 @@ export function createOminityCustomerAccountsRouteHandlers(
     if (auth instanceof Response) {
       return auth;
     }
-    const customerId = await requireActiveCustomer(config, auth);
+    const customerId = await requireActiveCustomer(
+      config,
+      auth,
+      CUSTOMER_PERMISSIONS.usersManage,
+    );
     if (customerId instanceof Response) {
       return customerId;
     }

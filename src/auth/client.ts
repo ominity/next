@@ -1,4 +1,5 @@
 import { Ominity } from "@ominity/api-typescript";
+import type { RequestOptions } from "@ominity/api-typescript/lib/sdks.js";
 
 import { AuthClientError } from "../cms/errors.js";
 import { createAuthDebugLogger } from "./debug.js";
@@ -33,22 +34,12 @@ import type {
   AuthListUserRecoveryCodesInput,
   AuthRecordUserLoginInput,
   AuthRegenerateRecoveryCodesInput,
-  AuthRequestOptions,
   AuthResetPasswordInput,
   AuthSendPasswordResetLinkInput,
   AuthUserMfaMethodInput,
   AuthValidateMfaInput,
   AuthValidateRecoveryCodeInput,
 } from "./types.js";
-
-interface AuthRequestInput {
-  readonly requestOptions?: AuthRequestOptions | undefined;
-  readonly serverURL?: string | URL | undefined;
-  readonly accept?: string | undefined;
-  readonly query?: Record<string, unknown> | string | undefined;
-  readonly json?: unknown | undefined;
-  readonly security?: Record<string, unknown> | undefined;
-}
 
 function rethrowAuthClientError(
   message: string,
@@ -77,7 +68,7 @@ function stripApiVersion(serverURL: string | URL): URL {
 
 function resolveOAuth2ServerURL(
   fallback: string | undefined,
-  requestOptions?: AuthRequestOptions,
+  requestOptions?: RequestOptions,
 ): string | URL | undefined {
   if (requestOptions?.serverURL) {
     return stripApiVersion(requestOptions.serverURL);
@@ -90,38 +81,15 @@ function resolveOAuth2ServerURL(
   return stripApiVersion(fallback);
 }
 
-function createPath(...segments: ReadonlyArray<string | number>): string {
-  const encoded = segments.map((value) => encodeURIComponent(String(value)));
-  return `/${encoded.join("/")}`;
-}
-
-function buildHttpRequestOptions(input: AuthRequestInput): Record<string, unknown> {
-  const headers = new Headers(input.requestOptions?.headers);
-  if (typeof input.accept === "string") {
-    headers.set("Accept", input.accept);
-  }
-
+function oauth2RequestOptions(
+  fallback: string | undefined,
+  requestOptions?: RequestOptions,
+): RequestOptions {
+  const serverURL = resolveOAuth2ServerURL(fallback, requestOptions);
   return {
-    ...(input.requestOptions ?? {}),
-    headers,
-    ...(typeof input.serverURL !== "undefined" ? { serverURL: input.serverURL } : {}),
-    ...(typeof input.query !== "undefined" ? { query: input.query } : {}),
-    ...(typeof input.json !== "undefined" ? { json: input.json } : {}),
-    ...(typeof input.security !== "undefined" ? { security: input.security } : {}),
+    ...(requestOptions ?? {}),
+    ...(serverURL ? { serverURL } : {}),
   };
-}
-
-async function parseResponseBody(response: Response): Promise<unknown> {
-  if (response.status === 204) {
-    return null;
-  }
-
-  const contentType = response.headers.get("content-type") ?? "";
-  if (contentType.includes("json")) {
-    return response.json();
-  }
-
-  return response.text();
 }
 
 function toOAuthIssueRequest(input: AuthIssueTokenInput): {
@@ -158,30 +126,14 @@ export function createAuthClient(options: AuthClientOptions): AuthClient {
   const sdk = new Ominity(options.sdk);
   const debug = createAuthDebugLogger(options.debug, "auth-client");
 
-  const requestJson = async (
-    method: string,
-    path: string,
-    input: AuthRequestInput = {},
-  ): Promise<unknown> => {
-    const response = await sdk.http.request(method, path, buildHttpRequestOptions(input));
-    return parseResponseBody(response);
-  };
-
   return {
     async issueToken(input) {
       debug.emit("debug", "Issuing OAuth2 token", { grantType: input.grantType });
 
       try {
-        const payload = await requestJson(
-          "POST",
-          "/oauth2/token",
-          {
-            requestOptions: input.requestOptions,
-            serverURL: resolveOAuth2ServerURL(options.sdk.serverURL, input.requestOptions),
-            accept: "application/json",
-            json: toOAuthIssueRequest(input),
-            security: {},
-          },
+        const payload = await sdk.oauth2.issueToken(
+          toOAuthIssueRequest(input),
+          oauth2RequestOptions(options.sdk.serverURL, input.requestOptions),
         );
         return normalizeOAuthTokenResponse(payload);
       } catch (error) {
@@ -235,15 +187,9 @@ export function createAuthClient(options: AuthClientOptions): AuthClient {
       debug.emit("debug", "Refreshing transient OAuth2 token cookie");
 
       try {
-        const payload = await requestJson(
-          "POST",
-          "/oauth2/token/refresh",
-          {
-            requestOptions: input.requestOptions,
-            serverURL: resolveOAuth2ServerURL(options.sdk.serverURL, input.requestOptions),
-            accept: "text/plain",
-            security: {},
-          },
+        const payload = await sdk.oauth2.refreshTransientTokenCookie(
+          {},
+          oauth2RequestOptions(options.sdk.serverURL, input.requestOptions),
         );
 
         if (typeof payload !== "string") {
@@ -264,15 +210,9 @@ export function createAuthClient(options: AuthClientOptions): AuthClient {
       debug.emit("debug", "Listing authorized OAuth2 tokens");
 
       try {
-        const payload = await requestJson(
-          "GET",
-          "/oauth2/tokens",
-          {
-            requestOptions: input.requestOptions,
-            serverURL: resolveOAuth2ServerURL(options.sdk.serverURL, input.requestOptions),
-            accept: "application/json",
-            security: {},
-          },
+        const payload = await sdk.oauth2.listAuthorizedTokens(
+          {},
+          oauth2RequestOptions(options.sdk.serverURL, input.requestOptions),
         );
         return normalizeAuthorizedTokenList(payload);
       } catch (error) {
@@ -285,15 +225,9 @@ export function createAuthClient(options: AuthClientOptions): AuthClient {
       debug.emit("debug", "Revoking authorized OAuth2 token", { tokenId });
 
       try {
-        await requestJson(
-          "DELETE",
-          createPath("oauth2", "tokens", tokenId),
-          {
-            requestOptions: input.requestOptions,
-            serverURL: resolveOAuth2ServerURL(options.sdk.serverURL, input.requestOptions),
-            accept: "application/json",
-            security: {},
-          },
+        await sdk.oauth2.revokeAuthorizedToken(
+          { token_id: tokenId },
+          oauth2RequestOptions(options.sdk.serverURL, input.requestOptions),
         );
       } catch (error) {
         rethrowAuthClientError("Failed to revoke authorized OAuth2 token.", error, {
@@ -307,13 +241,9 @@ export function createAuthClient(options: AuthClientOptions): AuthClient {
       debug.emit("debug", "Listing user MFA methods", { userId });
 
       try {
-        const payload = await requestJson(
-          "GET",
-          createPath("users", userId, "mfa-methods"),
-          {
-            requestOptions: input.requestOptions,
-            accept: "application/hal+json",
-          },
+        const payload = await sdk.users.mfaMethods.list(
+          { id: userId },
+          input.requestOptions,
         );
         return normalizeMfaMethodList(payload);
       } catch (error) {
@@ -329,13 +259,9 @@ export function createAuthClient(options: AuthClientOptions): AuthClient {
       debug.emit("debug", "Getting user MFA method", { userId, method });
 
       try {
-        const payload = await requestJson(
-          "GET",
-          createPath("users", userId, "mfa-methods", method),
-          {
-            requestOptions: input.requestOptions,
-            accept: "application/json",
-          },
+        const payload = await sdk.users.mfaMethods.get(
+          { id: userId, method },
+          input.requestOptions,
         );
         return normalizeMfaMethod(payload);
       } catch (error) {
@@ -352,13 +278,9 @@ export function createAuthClient(options: AuthClientOptions): AuthClient {
       debug.emit("debug", "Enabling user MFA method", { userId, method });
 
       try {
-        const payload = await requestJson(
-          "POST",
-          createPath("users", userId, "mfa-methods", method, "enable"),
-          {
-            requestOptions: input.requestOptions,
-            accept: "application/json",
-          },
+        const payload = await sdk.users.mfaMethods.enable(
+          { id: userId, method },
+          input.requestOptions,
         );
         return normalizeMfaMethod(payload);
       } catch (error) {
@@ -375,13 +297,9 @@ export function createAuthClient(options: AuthClientOptions): AuthClient {
       debug.emit("debug", "Disabling user MFA method", { userId, method });
 
       try {
-        const payload = await requestJson(
-          "DELETE",
-          createPath("users", userId, "mfa-methods", method),
-          {
-            requestOptions: input.requestOptions,
-            accept: "application/json",
-          },
+        const payload = await sdk.users.mfaMethods.disable(
+          { id: userId, method },
+          input.requestOptions,
         );
         return normalizeStatusResult(payload);
       } catch (error) {
@@ -398,13 +316,9 @@ export function createAuthClient(options: AuthClientOptions): AuthClient {
       debug.emit("debug", "Sending MFA code", { userId, method });
 
       try {
-        const payload = await requestJson(
-          "POST",
-          createPath("users", userId, "mfa-methods", method, "send"),
-          {
-            requestOptions: input.requestOptions,
-            accept: "application/json",
-          },
+        const payload = await sdk.users.mfaMethods.send(
+          { id: userId, method },
+          input.requestOptions,
         );
         return normalizeStatusResult(payload);
       } catch (error) {
@@ -422,14 +336,9 @@ export function createAuthClient(options: AuthClientOptions): AuthClient {
       debug.emit("debug", "Validating MFA code", { userId, method });
 
       try {
-        const payload = await requestJson(
-          "POST",
-          createPath("users", userId, "mfa-methods", method, "validate"),
-          {
-            requestOptions: input.requestOptions,
-            accept: "application/json",
-            json: { code },
-          },
+        const payload = await sdk.users.mfaMethods.validate(
+          { id: userId, method, code },
+          input.requestOptions,
         );
         return normalizeStatusResult(payload);
       } catch (error) {
@@ -445,19 +354,16 @@ export function createAuthClient(options: AuthClientOptions): AuthClient {
       debug.emit("debug", "Listing user recovery codes", { userId });
 
       try {
-        const payload = await requestJson(
-          "GET",
-          createPath("users", userId, "recovery-codes"),
-          {
-            requestOptions: input.requestOptions,
-            accept: "application/hal+json",
-            query: {
-              ...(typeof input.sort === "string" ? { sort: input.sort } : {}),
-              ...(typeof input.filter?.id === "number" ? { "filter[id]": input.filter.id } : {}),
-              ...(typeof input.filter?.active === "boolean" ? { "filter[active]": input.filter.active } : {}),
+        const payload = await sdk.users.recoveryCodes.list({
+          id: userId,
+          ...(typeof input.sort === "string" ? { sort: input.sort } : {}),
+          ...(input.filter ? {
+            filter: {
+              ...(typeof input.filter.id === "number" ? { id: input.filter.id } : {}),
+              ...(typeof input.filter.active === "boolean" ? { active: input.filter.active } : {}),
             },
-          },
-        );
+          } : {}),
+        }, input.requestOptions);
         return normalizeRecoveryCodeList(payload);
       } catch (error) {
         rethrowAuthClientError("Failed to list user recovery codes.", error, {
@@ -471,17 +377,10 @@ export function createAuthClient(options: AuthClientOptions): AuthClient {
       debug.emit("debug", "Regenerating user recovery codes", { userId });
 
       try {
-        const payload = await requestJson(
-          "POST",
-          createPath("users", userId, "recovery-codes"),
-          {
-            requestOptions: input.requestOptions,
-            accept: "application/hal+json",
-            json: {
-              confirm: input.confirm === true,
-            },
-          },
-        );
+        const payload = await sdk.users.recoveryCodes.regenerate({
+          id: userId,
+          confirm: input.confirm === true,
+        }, input.requestOptions);
         return normalizeRecoveryCodeList(payload);
       } catch (error) {
         rethrowAuthClientError("Failed to regenerate user recovery codes.", error, {
@@ -496,14 +395,9 @@ export function createAuthClient(options: AuthClientOptions): AuthClient {
       debug.emit("debug", "Validating user recovery code", { userId });
 
       try {
-        const payload = await requestJson(
-          "POST",
-          createPath("users", userId, "recovery-codes", "validate"),
-          {
-            requestOptions: input.requestOptions,
-            accept: "application/json",
-            json: { code },
-          },
+        const payload = await sdk.users.recoveryCodes.validate(
+          { id: userId, code },
+          input.requestOptions,
         );
         return normalizeStatusResult(payload);
       } catch (error) {
@@ -593,27 +487,24 @@ export function createAuthClient(options: AuthClientOptions): AuthClient {
       debug.emit("debug", "Listing user OAuth accounts", { userId });
 
       try {
-        const payload = await requestJson(
-          "GET",
-          createPath("users", userId, "oauthaccounts"),
-          {
-            requestOptions: input.requestOptions,
-            accept: "application/hal+json",
-            query: {
-              ...(typeof input.page === "number" ? { page: input.page } : {}),
-              ...(typeof input.limit === "number" ? { limit: input.limit } : {}),
-              ...(typeof input.sort === "string" ? { sort: input.sort } : {}),
-              ...(typeof input.filter?.id === "number" ? { "filter[id]": input.filter.id } : {}),
-              ...(typeof input.filter?.providerId === "number"
-                ? { "filter[providerId]": input.filter.providerId }
+        const payload = await sdk.users.oauthAccounts.list({
+          id: userId,
+          ...(typeof input.page === "number" ? { page: input.page } : {}),
+          ...(typeof input.limit === "number" ? { limit: input.limit } : {}),
+          ...(typeof input.sort === "string" ? { sort: input.sort } : {}),
+          ...(input.filter ? {
+            filter: {
+              ...(typeof input.filter.id === "number" ? { id: input.filter.id } : {}),
+              ...(typeof input.filter.providerId === "number"
+                ? { providerId: input.filter.providerId }
                 : {}),
-              ...(typeof input.filter?.identifier === "string"
-                ? { "filter[identifier]": input.filter.identifier }
+              ...(typeof input.filter.identifier === "string"
+                ? { identifier: input.filter.identifier }
                 : {}),
-              ...(typeof input.filter?.email === "string" ? { "filter[email]": input.filter.email } : {}),
+              ...(typeof input.filter.email === "string" ? { email: input.filter.email } : {}),
             },
-          },
-        );
+          } : {}),
+        }, input.requestOptions);
         return normalizeOAuthAccountList(payload);
       } catch (error) {
         rethrowAuthClientError("Failed to list user OAuth accounts.", error, {
@@ -627,18 +518,11 @@ export function createAuthClient(options: AuthClientOptions): AuthClient {
       debug.emit("debug", "Listing user customers", { userId });
 
       try {
-        const payload = await requestJson(
-          "GET",
-          createPath("users", userId, "customers"),
-          {
-            requestOptions: input.requestOptions,
-            accept: "application/hal+json",
-            query: {
-              ...(typeof input.page === "number" ? { page: input.page } : {}),
-              ...(typeof input.limit === "number" ? { limit: input.limit } : {}),
-            },
-          },
-        );
+        const payload = await sdk.users.customers.list({
+          id: userId,
+          ...(typeof input.page === "number" ? { page: input.page } : {}),
+          ...(typeof input.limit === "number" ? { limit: input.limit } : {}),
+        }, input.requestOptions);
         return normalizeUserCustomerList(payload);
       } catch (error) {
         rethrowAuthClientError("Failed to list user customers.", error, {
@@ -653,24 +537,16 @@ export function createAuthClient(options: AuthClientOptions): AuthClient {
       });
 
       try {
-        const payload = await requestJson(
-          "POST",
-          createPath("users", "password-reset", "send"),
-          {
-            requestOptions: input.requestOptions,
-            accept: "application/json",
-            json: {
-              email: ensureNonEmptyString(input.email, "email"),
-              redirectUrl: ensureNonEmptyString(input.redirectUrl, "redirectUrl"),
-              ...(typeof input.userAgent === "string" || input.userAgent === null
-                ? { userAgent: input.userAgent }
-                : {}),
-              ...(typeof input.ipAddress === "string" || input.ipAddress === null
-                ? { ipAddress: input.ipAddress }
-                : {}),
-            },
-          },
-        );
+        const payload = await sdk.users.sendPasswordResetLink({
+          email: ensureNonEmptyString(input.email, "email"),
+          redirectUrl: ensureNonEmptyString(input.redirectUrl, "redirectUrl"),
+          ...(typeof input.userAgent === "string" || input.userAgent === null
+            ? { userAgent: input.userAgent }
+            : {}),
+          ...(typeof input.ipAddress === "string" || input.ipAddress === null
+            ? { ipAddress: input.ipAddress }
+            : {}),
+        }, input.requestOptions);
         return normalizePasswordResetLinkResult(payload);
       } catch (error) {
         rethrowAuthClientError("Failed to send password reset link.", error, {
@@ -685,25 +561,17 @@ export function createAuthClient(options: AuthClientOptions): AuthClient {
       });
 
       try {
-        const payload = await requestJson(
-          "POST",
-          createPath("users", "password-reset", "update"),
-          {
-            requestOptions: input.requestOptions,
-            accept: "application/json",
-            json: {
-              email: ensureNonEmptyString(input.email, "email"),
-              token: ensureNonEmptyString(input.token, "token"),
-              password: ensureNonEmptyString(input.password, "password"),
-              ...(typeof input.userAgent === "string" || input.userAgent === null
-                ? { userAgent: input.userAgent }
-                : {}),
-              ...(typeof input.ipAddress === "string" || input.ipAddress === null
-                ? { ipAddress: input.ipAddress }
-                : {}),
-            },
-          },
-        );
+        const payload = await sdk.users.resetPassword({
+          email: ensureNonEmptyString(input.email, "email"),
+          token: ensureNonEmptyString(input.token, "token"),
+          password: ensureNonEmptyString(input.password, "password"),
+          ...(typeof input.userAgent === "string" || input.userAgent === null
+            ? { userAgent: input.userAgent }
+            : {}),
+          ...(typeof input.ipAddress === "string" || input.ipAddress === null
+            ? { ipAddress: input.ipAddress }
+            : {}),
+        }, input.requestOptions);
         return normalizeResetPasswordResult(payload);
       } catch (error) {
         rethrowAuthClientError("Failed to reset password.", error, {

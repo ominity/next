@@ -93,7 +93,7 @@ declare module "react/jsx-runtime" {
 }
 
 declare namespace JSX {
-  interface Element extends import("react").ReactElement {}
+  type Element = import("react").ReactElement;
 
   interface IntrinsicAttributes {
     key?: import("react").Key | null | undefined;

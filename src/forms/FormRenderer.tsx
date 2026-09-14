@@ -630,7 +630,7 @@ const getCheckboxValidation = (
   }
 
   return (value: unknown) => {
-    if (Boolean(value)) {
+    if (value) {
       return true;
     }
 

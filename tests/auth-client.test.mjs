@@ -130,6 +130,8 @@ test("createAuthClient normalizes MFA, recovery, oauth accounts, customers and p
               userId: 7,
               customerId: 55,
               roleId: 2,
+              isOwner: false,
+              permissions: ["commerce.orders.view"],
               firstName: "John",
               lastName: "Doe",
               email: "john@example.com",

@@ -27,7 +27,7 @@ CMS-driven websites often need the same foundation repeatedly:
 ## Install
 
 ```bash
-pnpm add @ominity/next @ominity/api-typescript@^1.4.3
+pnpm add @ominity/next @ominity/api-typescript@^1.4.5
 ```
 
 If you use forms rendering, also install:
@@ -143,7 +143,7 @@ Client Components can be nested inside rendered CMS pages without making the who
 
 ## Auth
 
-`@ominity/next/auth` provides a server-first auth layer on top of `@ominity/api-typescript@^1.4.3`:
+`@ominity/next/auth` provides a server-first auth layer on top of `@ominity/api-typescript@^1.4.5`:
 
 - OAuth2 token issuance (`password`, `refresh_token`, and other supported grants)
 - user access token issuance (`users/{id}/token`)
@@ -234,11 +234,15 @@ export function Providers({ children }: { children: React.ReactNode }) {
 }
 ```
 
-`useOminityCustomerAccounts()` then provides the account list, active account,
+`useOminityCustomerAccounts()` provides the account list, active account,
 switching, permission checks, members, invitations, assignable roles, partial
-loading errors, and all mutations. Invitation registration continues through
-the normal auth registration route; the package only inspects and accepts an
-invitation after the authenticated user's email matches. See
+loading errors, and all team mutations. Its typed client also covers active
+customer details, addresses, groups, mandates, payments, orders, invoices and
+PDFs, subscription cancellation, and transition products. `useOminityCustomerQuery`
+reloads these resources on an account switch without exposing stale data.
+Invitation registration continues through the normal auth registration route;
+the package only inspects and accepts an invitation after the authenticated
+user's email matches. See
 [`docs/customer-accounts.md`](docs/customer-accounts.md) for the complete route
 surface and headless rendering examples.
 
@@ -270,6 +274,15 @@ Use `OminityCommerceProvider` and `useOminityCommerce` from
 quantity only. Cart count, subtotal, shipping, discounts, tax, currency, and
 total are read from the `Cart` returned by Ominity; the package does not
 recalculate them from cart items.
+
+For the default browser integration, add one optional catch-all route with
+`createOminityCommerceRouteHandlers`. It covers cart operations, cart-scoped
+shipping methods, payment methods and issuers, checkout, orders, order payments,
+and payment reads. Commerce mutations use same-origin checks, and payment
+creation forwards `Idempotency-Key`. `createCommerceClient` also exposes the SDK
+1.4.5 product, offer, shipping-class, issuer, order-payment, and payment
+operations under their original SDK model names. See
+[`docs/commerce.md`](docs/commerce.md) for the route table and headless examples.
 
 ## SEO and sitemaps
 
@@ -602,27 +615,48 @@ API requests, and export/copy tooling.
 ```tsx
 "use client";
 
-import { OminityDebugBar } from "@ominity/next/debug";
+import { OminityAuthProvider } from "@ominity/next/auth/react";
+import { OminityDebugBar, OminityDebugProvider } from "@ominity/next/debug";
+import { OminityCommerceProvider } from "@ominity/next/commerce/react";
+import { OminityCustomerAccountsProvider } from "@ominity/next/customer-accounts/react";
+import { TrackingProvider } from "@ominity/next/tracking/provider";
 
-export function OminityDebugTools() {
+export function Providers({ children }: { children: React.ReactNode }) {
+  const debugEnabled = process.env.NODE_ENV !== "production";
+
   return (
-    <OminityDebugBar
-      enabled={process.env.NODE_ENV !== "production"}
-      theme="system"
-      integration={{
-        appName: "Storefront",
-        environment: process.env.NODE_ENV,
-        debugBar: true,
+    <OminityDebugProvider
+      enabled={debugEnabled}
+      initialSnapshot={{
+        integration: {
+          appName: "Storefront",
+          environment: process.env.NODE_ENV,
+          debugBar: true,
+        },
       }}
-      channel={{
-        source: "configured",
-        identifier: "web",
-        defaultLocale: "en",
-      }}
-    />
+    >
+      <OminityAuthProvider>
+        <OminityCustomerAccountsProvider>
+          <OminityCommerceProvider>
+            <TrackingProvider>
+              {children}
+              <OminityDebugBar enabled={debugEnabled} theme="system" />
+            </TrackingProvider>
+          </OminityCommerceProvider>
+        </OminityCustomerAccountsProvider>
+      </OminityAuthProvider>
+    </OminityDebugProvider>
   );
 }
 ```
+
+`OminityAuthProvider`, `OminityCustomerAccountsProvider`,
+`OminityCommerceProvider`, and `TrackingProvider` automatically register their
+debug capability when they are rendered inside `OminityDebugProvider`. Projects
+that remove one of those modules simply do not render that provider, and the tab
+does not appear. Pass explicit props to `OminityDebugBar` for app-specific
+adapters or to override auto-detected information; for example `auth={false}`
+hides the auth tab.
 
 For Laravel Debugbar-style request history, pass a request context to
 `createOminityDebugFetcher` or `createOminityDebugHttpClient`. Use the same
@@ -661,6 +695,7 @@ For Laravel Debugbar-style request history, pass a request context to
 - `docs/ssg-isr-ssr.md`
 - `docs/examples.md`
 - `docs/forms.md`
+- `docs/commerce.md`
 - `docs/auth.md`
 - `docs/customer-accounts.md`
 - `docs/troubleshooting.md`

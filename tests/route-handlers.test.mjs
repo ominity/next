@@ -84,16 +84,22 @@ test("createOminityFormUploadPresignRouteHandler uses the normalized media libra
     ominityBaseUrl: "https://example.ominity.test/api",
     resolveLanguage: () => "fr",
     fetchImpl: async (input, init = {}) => {
-      forwardedUrl = String(input);
-      forwardedHeaders = new Headers(init.headers);
-      forwardedBody = JSON.parse(init.body);
+      const forwardedRequest = input instanceof Request
+        ? input
+        : new Request(input, init);
+      forwardedUrl = forwardedRequest.url;
+      forwardedHeaders = new Headers(forwardedRequest.headers);
+      forwardedBody = await forwardedRequest.clone().json();
 
       return new Response(JSON.stringify({
+        key: `${forwardedBody.path}/${forwardedBody.filename}`,
         url: "https://uploads.example.test/presigned",
         headers: {
           "x-upload-token": "token",
         },
         publicUrl: "https://cdn.example.test/file.png",
+        path: forwardedBody.path,
+        filename: forwardedBody.filename,
       }), {
         status: 200,
         headers: {

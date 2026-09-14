@@ -1,5 +1,30 @@
-import type { Paginated } from "@ominity/api-typescript/models";
-import type { Customer } from "@ominity/api-typescript/models/commerce/customer";
+import type {
+  Address,
+  Customer,
+  CustomerGroup,
+  Invoice,
+  Mandate,
+  Order,
+  Paginated,
+  Payment,
+  Product,
+  Subscription,
+} from "@ominity/api-typescript/models";
+import type {
+  AddressInput,
+  AddressUpdateInput,
+  CreateCustomerOrderRequest,
+  CreateCustomerPaymentRequest,
+  CustomerUpdateInput,
+  ListCustomerAddressesRequest,
+  ListCustomerGroupsRequest,
+  ListCustomerInvoicesRequest,
+  ListCustomerMandatesRequest,
+  ListCustomerOrdersRequest,
+  ListCustomerPaymentsRequest,
+  ListCustomerSubscriptionsRequest,
+  ListCustomerSubscriptionTransitionProductsRequest,
+} from "@ominity/api-typescript/models/operations";
 import type { CustomerUser } from "@ominity/api-typescript/models/commerce/customer-user";
 import type { CustomerUserInvitation } from "@ominity/api-typescript/models/commerce/customer-user-invitation";
 import type {
@@ -8,12 +33,40 @@ import type {
 import type { CustomerUserRole } from "@ominity/api-typescript/models/commerce/customer-user-role";
 
 export type {
+  Address,
   Customer,
+  CustomerGroup,
   CustomerUser,
   CustomerUserInvitation,
   CustomerUserPermissionCatalog,
   CustomerUserRole,
+  Invoice,
+  Mandate,
+  Order,
+  Payment,
+  Product,
+  Subscription,
 };
+export type {
+  AddressInput,
+  AddressUpdateInput,
+  CreateCustomerOrderRequest,
+  CreateCustomerSubscriptionRequest,
+  CreateCustomerMandateRequest,
+  CreateCustomerPaymentRequest,
+  CustomerUpdateInput,
+  ListCustomerAddressesRequest,
+  ListCustomerGroupsRequest,
+  ListCustomerInvoicesRequest,
+  ListCustomerMandatesRequest,
+  ListCustomerOrdersRequest,
+  ListCustomerPaymentsRequest,
+  ListCustomerSubscriptionsRequest,
+  ListCustomerSubscriptionTransitionProductsRequest,
+  UpdateCustomerMandateRequest,
+  UpdateCustomerOrderRequest,
+  UpdateCustomerSubscriptionRequest,
+} from "@ominity/api-typescript/models/operations";
 
 export interface CustomerAccountsRequestOptions {
   readonly signal?: AbortSignal;
@@ -63,7 +116,130 @@ export interface CustomerAccountsClientOptions {
   readonly fetch?: typeof globalThis.fetch;
 }
 
+export interface ActiveCustomerClient {
+  get(
+    input?: { readonly include?: string },
+    options?: CustomerAccountsRequestOptions,
+  ): Promise<Customer>;
+  update(
+    data: CustomerUpdateInput,
+    options?: CustomerAccountsRequestOptions,
+  ): Promise<Customer>;
+}
+
+export interface CustomerAddressesClient {
+  list(
+    input?: Omit<ListCustomerAddressesRequest, "customerId">,
+    options?: CustomerAccountsRequestOptions,
+  ): Promise<Paginated<Address>>;
+  get(id: number, options?: CustomerAccountsRequestOptions): Promise<Address>;
+  create(data: AddressInput, options?: CustomerAccountsRequestOptions): Promise<Address>;
+  update(
+    id: number,
+    data: AddressUpdateInput,
+    options?: CustomerAccountsRequestOptions,
+  ): Promise<Address>;
+  remove(id: number, options?: CustomerAccountsRequestOptions): Promise<void>;
+}
+
+export interface CustomerGroupsClient {
+  list(
+    input?: Omit<ListCustomerGroupsRequest, "customerId">,
+    options?: CustomerAccountsRequestOptions,
+  ): Promise<Paginated<CustomerGroup>>;
+  get(
+    id: number,
+    input?: { readonly include?: string },
+    options?: CustomerAccountsRequestOptions,
+  ): Promise<CustomerGroup>;
+}
+
+export interface CustomerMandatesClient {
+  list(
+    input?: Omit<ListCustomerMandatesRequest, "customerId">,
+    options?: CustomerAccountsRequestOptions,
+  ): Promise<Paginated<Mandate>>;
+  get(id: number, options?: CustomerAccountsRequestOptions): Promise<Mandate>;
+}
+
+export interface CustomerPaymentsClient {
+  list(
+    input?: Omit<ListCustomerPaymentsRequest, "customerId">,
+    options?: CustomerAccountsRequestOptions,
+  ): Promise<Paginated<Payment>>;
+  get(id: number, options?: CustomerAccountsRequestOptions): Promise<Payment>;
+  create(
+    data: CreateCustomerPaymentRequest["data"],
+    input?: Pick<CreateCustomerPaymentRequest, "include">,
+    options?: CustomerAccountsRequestOptions,
+  ): Promise<Payment>;
+}
+
+export interface CustomerOrdersClient {
+  list(
+    input?: Omit<ListCustomerOrdersRequest, "customerId">,
+    options?: CustomerAccountsRequestOptions,
+  ): Promise<Paginated<Order>>;
+  get(
+    id: number,
+    input?: { readonly include?: string },
+    options?: CustomerAccountsRequestOptions,
+  ): Promise<Order>;
+  create(
+    data: CreateCustomerOrderRequest["data"],
+    options?: CustomerAccountsRequestOptions,
+  ): Promise<Order>;
+}
+
+export interface CustomerInvoicesClient {
+  list(
+    input?: Omit<ListCustomerInvoicesRequest, "customerId">,
+    options?: CustomerAccountsRequestOptions,
+  ): Promise<Paginated<Invoice>>;
+  get(
+    id: number,
+    input?: { readonly include?: string },
+    options?: CustomerAccountsRequestOptions,
+  ): Promise<Invoice>;
+  downloadPdf(id: number, options?: CustomerAccountsRequestOptions): Promise<Uint8Array>;
+}
+
+export interface CustomerSubscriptionsClient {
+  list(
+    input?: Omit<ListCustomerSubscriptionsRequest, "customerId">,
+    options?: CustomerAccountsRequestOptions,
+  ): Promise<Paginated<Subscription>>;
+  get(
+    id: number,
+    input?: { readonly include?: string },
+    options?: CustomerAccountsRequestOptions,
+  ): Promise<Subscription>;
+  remove(id: number, options?: CustomerAccountsRequestOptions): Promise<void>;
+  listTransitionProducts(
+    subscriptionId: number,
+    input?: Omit<
+      ListCustomerSubscriptionTransitionProductsRequest,
+      "customerId" | "subscriptionId"
+    >,
+    options?: CustomerAccountsRequestOptions,
+  ): Promise<Paginated<Product>>;
+  getTransitionProduct(
+    subscriptionId: number,
+    productId: number,
+    input?: { readonly include?: string },
+    options?: CustomerAccountsRequestOptions,
+  ): Promise<Product>;
+}
+
 export interface CustomerAccountsClient {
+  readonly customer: ActiveCustomerClient;
+  readonly addresses: CustomerAddressesClient;
+  readonly groups: CustomerGroupsClient;
+  readonly mandates: CustomerMandatesClient;
+  readonly payments: CustomerPaymentsClient;
+  readonly orders: CustomerOrdersClient;
+  readonly invoices: CustomerInvoicesClient;
+  readonly subscriptions: CustomerSubscriptionsClient;
   getContext(options?: CustomerAccountsRequestOptions): Promise<CustomerAccountContext>;
   switchCustomer(
     customerId: number,

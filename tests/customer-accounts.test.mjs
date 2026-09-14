@@ -17,6 +17,11 @@ import {
   readActiveCustomerId,
   writeActiveCustomerId,
 } from "../dist/customer-accounts/server/index.js";
+import {
+  handleCustomerAccountResourceDelete,
+  handleCustomerAccountResourceGet,
+  handleCustomerAccountResourcePost,
+} from "../dist/customer-accounts/server/resources.js";
 import { createOminitySdkCache } from "../dist/server/index.js";
 
 const membership = {
@@ -51,6 +56,12 @@ test("customer permission helpers support core and module-registered permission 
   ]), false);
   assert.equal(hasAnyCustomerPermission(membership, [
     CUSTOMER_PERMISSIONS.usersManage,
+    "bookings.appointments.manage",
+  ]), true);
+  const owner = { ...membership, isOwner: true, permissions: [] };
+  assert.equal(hasCustomerPermission(owner, CUSTOMER_PERMISSIONS.usersManage), true);
+  assert.equal(hasEveryCustomerPermission(owner, [
+    CUSTOMER_PERMISSIONS.customerManage,
     "bookings.appointments.manage",
   ]), true);
 });
@@ -103,6 +114,171 @@ test("customer account client uses same-origin routes and keeps invitation token
   assert.equal(new Headers(calls[0].init.headers).get("accept"), "application/json");
   assert.equal(calls[0].init.credentials, "same-origin");
   assert.equal(calls[0].init.cache, "no-store");
+});
+
+test("customer account client covers typed active-customer resources and binary invoices", async () => {
+  const calls = [];
+  const client = createCustomerAccountsClient({
+    basePath: "/api/account",
+    fetch: async (input, init = {}) => {
+      const request = new Request(`https://store.example.com${String(input)}`, init);
+      calls.push({
+        url: new URL(request.url),
+        method: request.method,
+        headers: request.headers,
+        body: request.method === "GET" ? null : await request.clone().text(),
+      });
+      if (new URL(request.url).pathname.endsWith("/pdf")) {
+        return new Response(new Uint8Array([37, 80, 68, 70]), {
+          headers: { "Content-Type": "application/pdf" },
+        });
+      }
+      if (request.method === "DELETE") return new Response(null, { status: 204 });
+      return Response.json({ items: [], count: 0 });
+    },
+  });
+
+  await client.addresses.list({
+    page: 2,
+    limit: 25,
+    filter: { type: ["billing", "shipping"], active: true },
+  });
+  await client.payments.create({
+    paymentmethodId: 4,
+    redirectUrl: "https://store.example.com/payment/return",
+  }, { include: "invoice" }, { headers: { "Idempotency-Key": "payment-42" } });
+  await client.subscriptions.remove(8);
+  const pdf = await client.invoices.downloadPdf(91);
+  await client.addresses.remove(12);
+
+  assert.equal(calls[0].url.pathname, "/api/account/addresses");
+  assert.equal(calls[0].url.searchParams.get("page"), "2");
+  assert.deepEqual(calls[0].url.searchParams.getAll("filter[type]"), ["billing", "shipping"]);
+  assert.equal(calls[0].url.searchParams.get("filter[active]"), "true");
+  assert.equal(calls[1].method, "POST");
+  assert.equal(calls[1].url.pathname, "/api/account/payments");
+  assert.equal(calls[1].url.searchParams.get("include"), "invoice");
+  assert.equal(calls[1].headers.get("idempotency-key"), "payment-42");
+  assert.deepEqual(JSON.parse(calls[1].body), {
+    paymentmethodId: 4,
+    redirectUrl: "https://store.example.com/payment/return",
+  });
+  assert.equal(calls[2].method, "DELETE");
+  assert.equal(calls[2].url.pathname, "/api/account/subscriptions/8");
+  assert.deepEqual(Array.from(pdf), [37, 80, 68, 70]);
+  assert.deepEqual(calls.slice(3).map(({ method, url }) => [method, url.pathname]), [
+    ["GET", "/api/account/invoices/91/pdf"],
+    ["DELETE", "/api/account/addresses/12"],
+  ]);
+});
+
+test("active-customer resource routes scope SDK calls and enforce permissions", async () => {
+  const calls = [];
+  const sdk = {
+    commerce: {
+      customerOrders: {
+        async list(input) {
+          calls.push(["orders.list", input]);
+          return { items: [], count: 0 };
+        },
+      },
+      customerPayments: {
+        async create(input, options) {
+          calls.push(["payments.create", input, options]);
+          return { resource: "payment", id: 22 };
+        },
+      },
+    },
+  };
+  const resourceMembership = {
+    ...membership,
+    permissions: [
+      CUSTOMER_PERMISSIONS.ordersView,
+      CUSTOMER_PERMISSIONS.paymentsManage,
+    ],
+  };
+
+  const listed = await handleCustomerAccountResourceGet({
+    request: new Request(
+      "https://store.example.com/api/customer-accounts/orders?page=2&filter[status]=open&filter[status]=paid",
+    ),
+    segments: ["orders"],
+    sdk,
+    customerId: 42,
+    membership: resourceMembership,
+  });
+  assert.equal(listed.status, 200);
+  assert.deepEqual(calls[0], ["orders.list", {
+    customerId: 42,
+    page: 2,
+    filter: { status: ["open", "paid"] },
+  }]);
+
+  const created = await handleCustomerAccountResourcePost({
+    request: new Request("https://store.example.com/api/customer-accounts/payments?include=invoice", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": "pay-22",
+      },
+      body: JSON.stringify({ paymentmethodId: 4, redirectUrl: "https://store.example.com/return" }),
+    }),
+    segments: ["payments"],
+    sdk,
+    customerId: 42,
+    membership: resourceMembership,
+  });
+  assert.equal(created.status, 201);
+  assert.deepEqual(calls[1], [
+    "payments.create",
+    {
+      customerId: 42,
+      include: "invoice",
+      data: { paymentmethodId: 4, redirectUrl: "https://store.example.com/return" },
+    },
+    { headers: { "Idempotency-Key": "pay-22" } },
+  ]);
+
+  const denied = await handleCustomerAccountResourceGet({
+    request: new Request("https://store.example.com/api/customer-accounts/invoices"),
+    segments: ["invoices"],
+    sdk,
+    customerId: 42,
+    membership: resourceMembership,
+  });
+  assert.equal(denied.status, 403);
+  assert.equal((await denied.json()).code, "MISSING_CUSTOMER_PERMISSION");
+
+  const unsupportedPaymentDelete = await handleCustomerAccountResourceDelete({
+    request: new Request("https://store.example.com/api/customer-accounts/payments/22", {
+      method: "DELETE",
+    }),
+    segments: ["payments", "22"],
+    sdk,
+    customerId: 42,
+    membership: {
+      ...resourceMembership,
+      permissions: [...resourceMembership.permissions, CUSTOMER_PERMISSIONS.paymentsManage],
+    },
+  });
+  assert.equal(unsupportedPaymentDelete, null);
+  assert.equal(calls.length, 2);
+});
+
+test("customer account route handlers reject cross-site mutations before authentication", async () => {
+  const handlers = createOminityCustomerAccountsRouteHandlers({
+    siteUrl: "https://store.example.com",
+  });
+  const response = await handlers.POST(new Request(
+    "https://store.example.com/api/customer-accounts/switch",
+    {
+      method: "POST",
+      headers: { Origin: "https://attacker.example" },
+      body: JSON.stringify({ customerId: 42 }),
+    },
+  ));
+  assert.equal(response.status, 403);
+  assert.equal((await response.json()).code, "INVALID_ORIGIN");
 });
 
 test("customer account client exposes structured backend failures", async () => {
