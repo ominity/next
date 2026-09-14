@@ -1,4 +1,5 @@
 import type { CmsPageComponent } from "../types.js";
+import type { ReactNode } from "react";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -21,7 +22,7 @@ export function isPrimitiveRenderable(value: unknown): value is string | number 
   return valueType === "string" || valueType === "number" || valueType === "boolean";
 }
 
-export function flattenRenderResult(value: unknown): ReadonlyArray<unknown> {
+export function flattenRenderResult(value: ReactNode): ReadonlyArray<ReactNode> {
   if (typeof value === "undefined" || value === null) {
     return [];
   }
@@ -30,7 +31,7 @@ export function flattenRenderResult(value: unknown): ReadonlyArray<unknown> {
     return [value];
   }
 
-  const flattened: unknown[] = [];
+  const flattened: ReactNode[] = [];
   for (const item of value) {
     flattened.push(...flattenRenderResult(item));
   }

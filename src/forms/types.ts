@@ -1,5 +1,8 @@
 import {
+  type ComponentType,
+  type ChangeEventHandler,
   type CSSProperties,
+  type HTMLAttributes,
   type ReactNode,
 } from "react";
 
@@ -294,12 +297,12 @@ export interface FormInputAdapterProps {
   className?: string | undefined;
   disabled?: boolean | undefined;
   autoComplete?: string | undefined;
-  inputMode?: string | undefined;
+  inputMode?: HTMLAttributes<HTMLInputElement>["inputMode"];
   "aria-describedby"?: string | undefined;
   "aria-invalid"?: boolean | undefined;
   invalid?: boolean | undefined;
-  onChange?: (...args: unknown[]) => void;
-  onBlur?: (...args: unknown[]) => void;
+  onChange?: ChangeEventHandler<HTMLInputElement>;
+  onBlur?: ChangeEventHandler<HTMLInputElement>;
   ref?: ((instance: unknown) => void) | undefined;
 }
 
@@ -315,8 +318,8 @@ export interface FormTextareaAdapterProps {
   "aria-describedby"?: string | undefined;
   "aria-invalid"?: boolean | undefined;
   invalid?: boolean | undefined;
-  onChange?: (...args: unknown[]) => void;
-  onBlur?: (...args: unknown[]) => void;
+  onChange?: ChangeEventHandler<HTMLTextAreaElement>;
+  onBlur?: ChangeEventHandler<HTMLTextAreaElement>;
   ref?: ((instance: unknown) => void) | undefined;
 }
 
@@ -421,7 +424,7 @@ export interface FormHtmlBlockAdapterProps {
   className?: string | undefined;
 }
 
-type AdapterComponent<TProps> = (props: TProps) => globalThis.JSX.Element | null;
+type AdapterComponent<TProps> = ComponentType<TProps>;
 
 export interface FormAdapters {
   Field?: AdapterComponent<FormFieldRootAdapterProps>;

@@ -1,5 +1,5 @@
 import Link from "next/link.js";
-import { createElement } from "react";
+import { createElement, type ReactNode } from "react";
 
 import type {
   CmsLinkResolver,
@@ -11,7 +11,7 @@ export interface LocaleLinkProps {
   readonly resolver: CmsLinkResolver;
   readonly target: CmsLinkTarget;
   readonly locale?: string;
-  readonly children?: unknown;
+  readonly children?: ReactNode;
   readonly externalTarget?: string;
   readonly externalRel?: string;
   readonly [key: string]: unknown;

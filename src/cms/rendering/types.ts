@@ -1,6 +1,7 @@
 import type { CmsPageComponent, CmsRenderContext } from "../types.js";
+import type { ReactNode } from "react";
 
-export type CmsRenderable = unknown;
+export type CmsRenderable = ReactNode;
 
 export interface CmsRenderer<TContext = CmsRenderContext> {
   render(value: unknown): CmsRenderable;

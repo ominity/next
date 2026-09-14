@@ -69,7 +69,7 @@ function defaultRendererOptions<TContext>(): Required<CmsRendererOptions<TContex
   };
 }
 
-function firstRenderable(values: ReadonlyArray<unknown>): unknown {
+function firstRenderable(values: ReadonlyArray<CmsRenderable>): CmsRenderable {
   if (values.length === 0) {
     return null;
   }
