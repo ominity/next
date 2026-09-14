@@ -1,6 +1,6 @@
 {
   "name": "@ominity/next",
-  "version": "1.9.1",
+  "version": "1.9.2",
   "description": "Headless Next.js integration layer for Ominity applications and storefronts.",
   "homepage": "https://github.com/ominity/next#readme",
   "bugs": {
@@ -114,6 +114,10 @@
       "types": "./dist/debug/index.d.ts",
       "default": "./dist/debug/index.js"
     },
+    "./dev-tool": {
+      "types": "./dist/debug/index.d.ts",
+      "default": "./dist/debug/index.js"
+    },
     "./package.json": "./package.json"
   },
   "main": "./dist/index.js",
@@ -136,7 +140,7 @@
   },
   "scripts": {
     "clean": "rm -rf dist",
-    "build": "pnpm clean && tsc -p tsconfig.json",
+    "build": "node scripts/generate-package-info.mjs && pnpm clean && tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint src",
     "test": "pnpm build && node --test tests/**/*.test.mjs",
@@ -144,7 +148,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.0.0",
-    "@ominity/api-typescript": "^1.4.5",
+    "@ominity/api-typescript": "^1.4.6",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "eslint": "^9.0.0",
@@ -157,7 +161,7 @@
     "typescript-eslint": "^8.0.0"
   },
   "peerDependencies": {
-    "@ominity/api-typescript": "^1.4.5",
+    "@ominity/api-typescript": "^1.4.6",
     "next": "^15.0.0 || ^16.0.0",
     "react": "^18.0.0 || ^19.0.0",
     "react-dom": "^18.0.0 || ^19.0.0",

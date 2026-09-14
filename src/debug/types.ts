@@ -89,6 +89,7 @@ export interface OminityDebugIntegrationInfo {
   readonly runtime?: string;
   readonly mockData?: boolean;
   readonly debugLogs?: boolean;
+  readonly devTool?: boolean;
   readonly debugBar?: boolean;
   readonly flags?: ReadonlyArray<OminityDebugFlag>;
   readonly details?: Readonly<Record<string, unknown>>;

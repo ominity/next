@@ -76,7 +76,6 @@ you need operational visibility:
 ```ts
 const authConfig = {
   ominityBaseUrl: process.env.OMINITY_API_URL,
-  channelId: process.env.OMINITY_CHANNEL_ID,
   authClientId: process.env.OMINITY_OAUTH_CLIENT_ID,
   authClientSecret: process.env.OMINITY_OAUTH_CLIENT_SECRET,
   authSessionSecret: process.env.OMINITY_AUTH_SESSION_SECRET,

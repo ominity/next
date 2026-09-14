@@ -27,7 +27,6 @@ import { createOminityCustomerAction } from "@ominity/next/actions/server";
 
 const config = {
   ominityBaseUrl: process.env.OMINITY_API_URL,
-  channelId: process.env.OMINITY_CHANNEL_ID,
   authSessionSecret: process.env.OMINITY_AUTH_SESSION_SECRET,
   siteUrl: process.env.NEXT_PUBLIC_SITE_URL,
   nodeEnv: process.env.NODE_ENV,

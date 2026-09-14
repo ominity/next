@@ -44,27 +44,32 @@ Peer dependencies:
 
 ## Quick start
 
-### 1) Create a CMS client
+### 1) Create channel-aware site support
 
 ```ts
-import { createCmsClient } from "@ominity/next/cms";
+import { createOminitySiteSupport } from "@ominity/next/next";
 
-export const cmsClient = createCmsClient({
-  sdk: {
-    serverURL: process.env.OMINITY_API_URL ?? "",
-    security: {
-      apiKey: process.env.OMINITY_API_KEY ?? "",
-    },
-    language: "en",
-    channelId: process.env.OMINITY_CHANNEL_ID,
-  },
-  debug: {
-    enabled: process.env.NODE_ENV !== "production",
-  },
+export const siteSupport = createOminitySiteSupport({
+  getConfig: () => ({
+    apiUrl: process.env.OMINITY_API_URL,
+    apiKey: process.env.OMINITY_API_KEY,
+    useMockData: false,
+    debugLogs: process.env.NODE_ENV !== "production",
+    localeSegmentStrategy: "language",
+    canonicalRedirectPolicy: "if-not-canonical",
+    stringLinkStrategy: "localize-relative",
+    trailingSlash: false,
+    basePath: "",
+  }),
 });
+
+export const cmsClient = siteSupport.getCmsClient();
 ```
 
-`getLocales()` now resolves languages through `/localization/languages` and merges channel defaults (`/channels/current`) when available.
+The API key identifies the current channel through `/channels/current`.
+`siteSupport.getChannelContext()` and
+`siteSupport.getChannelAwareCmsRouting()` use its languages, countries,
+currencies, and defaults as their source of truth.
 
 ### 2) Define your project registry
 
@@ -83,24 +88,14 @@ export const cmsRegistry = createCmsRegistry([
 ### 3) Resolve route + render page in App Router
 
 ```tsx
-import { createRoutingConfig } from "@ominity/next/cms";
 import { fetchCmsPageForParams } from "@ominity/next/next";
 import { renderCmsPage } from "@ominity/next/cms/rendering";
 
-import { cmsClient } from "@/lib/cms-client";
+import { cmsClient, siteSupport } from "@/lib/ominity";
 import { cmsRegistry } from "@/lib/cms-registry";
 
-const routing = createRoutingConfig({
-  defaultLocale: "en",
-  locales: [
-    { code: "en", language: "en", default: true },
-    { code: "nl", language: "nl" },
-  ],
-  localeSegmentStrategy: "language",
-  canonicalRedirectPolicy: "if-not-canonical",
-});
-
 export default async function CmsCatchAllPage({ params }: { params: { slug?: string[] } }) {
+  const routing = await siteSupport.getChannelAwareCmsRouting();
   const routes = await cmsClient.getRoutes();
   const resolved = await fetchCmsPageForParams({
     client: cmsClient,
@@ -206,7 +201,6 @@ import { createOminityCustomerAccountsRouteHandlers } from "@ominity/next/custom
 
 const handlers = createOminityCustomerAccountsRouteHandlers({
   ominityBaseUrl: process.env.OMINITY_API_URL,
-  channelId: process.env.OMINITY_CHANNEL_ID,
   authClientId: process.env.OMINITY_AUTH_CLIENT_ID,
   authClientSecret: process.env.OMINITY_AUTH_CLIENT_SECRET,
   authSessionSecret: process.env.OMINITY_AUTH_SESSION_SECRET,
@@ -603,10 +597,10 @@ It also supports opt-in custom click events via `data-ominity-event`:
 </button>
 ```
 
-## Debug bar
+## Ominity Dev Tool
 
-`@ominity/next/debug` provides a development-only debug bar for Ominity
-integrations. It captures SDK calls through the debug fetcher/HTTP client,
+`@ominity/next/dev-tool` provides the development-only Ominity Dev Tool for
+integrations. It captures SDK calls through its request-capture fetcher/HTTP client,
 groups them by page load or async request, and renders tabs for general
 integration state, config health, the active channel, route/rendering,
 cache/revalidation, auth/customer context, commerce, forms, tracking, searchable
@@ -616,7 +610,7 @@ API requests, and export/copy tooling.
 "use client";
 
 import { OminityAuthProvider } from "@ominity/next/auth/react";
-import { OminityDebugBar, OminityDebugProvider } from "@ominity/next/debug";
+import { OminityDevTool, OminityDevToolProvider } from "@ominity/next/dev-tool";
 import { OminityCommerceProvider } from "@ominity/next/commerce/react";
 import { OminityCustomerAccountsProvider } from "@ominity/next/customer-accounts/react";
 import { TrackingProvider } from "@ominity/next/tracking/provider";
@@ -625,13 +619,13 @@ export function Providers({ children }: { children: React.ReactNode }) {
   const debugEnabled = process.env.NODE_ENV !== "production";
 
   return (
-    <OminityDebugProvider
+    <OminityDevToolProvider
       enabled={debugEnabled}
       initialSnapshot={{
         integration: {
           appName: "Storefront",
           environment: process.env.NODE_ENV,
-          debugBar: true,
+          devTool: true,
         },
       }}
     >
@@ -640,26 +634,34 @@ export function Providers({ children }: { children: React.ReactNode }) {
           <OminityCommerceProvider>
             <TrackingProvider>
               {children}
-              <OminityDebugBar enabled={debugEnabled} theme="system" />
+              <OminityDevTool enabled={debugEnabled} theme="system" />
             </TrackingProvider>
           </OminityCommerceProvider>
         </OminityCustomerAccountsProvider>
       </OminityAuthProvider>
-    </OminityDebugProvider>
+    </OminityDevToolProvider>
   );
 }
 ```
 
-`OminityAuthProvider`, `OminityCustomerAccountsProvider`,
+The Dev Tool automatically detects its package and SDK versions, browser
+runtime, current route, and route locale. `OminityAuthProvider`,
+`OminityCustomerAccountsProvider`,
 `OminityCommerceProvider`, and `TrackingProvider` automatically register their
-debug capability when they are rendered inside `OminityDebugProvider`. Projects
+Dev Tool capability when they are rendered inside `OminityDevToolProvider`. Projects
 that remove one of those modules simply do not render that provider, and the tab
-does not appear. Pass explicit props to `OminityDebugBar` for app-specific
+does not appear. Pass explicit props to `OminityDevTool` for app-specific
 adapters or to override auto-detected information; for example `auth={false}`
 hides the auth tab.
 
+On the server, pass `await siteSupport.getDevToolChannelInfo()` as the
+`channel` capability in the provider snapshot. It reuses the cached current
+channel request and fills the Channel tab with the detected identity, active
+state, locales, languages, countries, currencies, domains, and available
+payment and shipping methods.
+
 For Laravel Debugbar-style request history, pass a request context to
-`createOminityDebugFetcher` or `createOminityDebugHttpClient`. Use the same
+`createOminityDevToolFetcher` or `createOminityDevToolHttpClient`. Use the same
 `pageId` for async requests that belong to the same browser page and set
 `parentId` when an async call follows a page request.
 
@@ -677,7 +679,8 @@ For Laravel Debugbar-style request history, pass a request context to
 - `@ominity/next/auth/server` – secure App Router auth route handlers
 - `@ominity/next/auth/react` – reusable browser auth state and workflows
 - `@ominity/next/customer-accounts` – browser client, SDK model exports, and customer permission helpers
-- `@ominity/next/debug` – development debug bar, SDK call capture, and request grouping helpers
+- `@ominity/next/dev-tool` – Ominity Dev Tool, SDK call capture, and request grouping helpers
+- `@ominity/next/debug` – backward-compatible Dev Tool import path
 - `@ominity/next/customer-accounts/server` – secure account/team App Router route handlers
 - `@ominity/next/customer-accounts/react` – account switching, team, permission, and invitation state/actions
 - `@ominity/next/seo` – sitemap, metadata-adjacent, and structured-data helpers

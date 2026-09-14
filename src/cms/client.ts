@@ -17,7 +17,7 @@ import type {
   CmsResponseNormalizers,
 } from "./types.js";
 
-const DEFAULT_CHANNEL_INCLUDE = "languages,countries,currencies,defaultLanguage,defaultCountry,defaultCurrency";
+const DEFAULT_CHANNEL_INCLUDE = "type,domains,languages,languages.locale,countries,currencies,defaultLanguage,defaultLanguage.locale,defaultCountry,defaultCurrency,defaultPaymentMethod,defaultShippingMethod,paymentMethods,shippingMethods";
 const DEFAULT_PAGE_INCLUDE = "content";
 
 const defaultEndpoints: CmsClientEndpoints = {
@@ -29,7 +29,7 @@ const defaultEndpoints: CmsClientEndpoints = {
 };
 
 const defaultQueryParamNames: CmsClientQueryParamNames = {
-  path: "path",
+  path: "filter[slug]",
   locale: "locale",
   preview: "preview",
   menuKey: "key",
@@ -68,7 +68,7 @@ function normalizePath(path: string): string {
 function pathToSlug(path: string): string {
   const normalizedPath = normalizePath(path);
   if (normalizedPath === "/") {
-    return "";
+    return "/";
   }
 
   return normalizedPath.replace(/^\//, "");
@@ -77,21 +77,11 @@ function pathToSlug(path: string): string {
 function buildQuery(
   queryParamNames: CmsClientQueryParamNames,
   params: CmsClientQueryParams,
-  options: {
-    includePathSlugFallback?: boolean;
-  } = {},
 ): Readonly<Record<string, string>> {
   const query: Record<string, string> = {};
 
   if (params.path) {
-    query[queryParamNames.path] = params.path;
-
-    if (options.includePathSlugFallback) {
-      const slug = pathToSlug(params.path);
-      if (slug.length > 0) {
-        query["filter[slug]"] = slug;
-      }
-    }
+    query[queryParamNames.path] = pathToSlug(params.path);
   }
 
   // Locale is sent via Accept-Language headers.
@@ -447,14 +437,9 @@ export function createCmsClient(options: CmsClientOptions): CmsClient {
       channelId?: string;
       requestId?: string;
       allowNotFound?: boolean;
-      includePathSlugFallback?: boolean;
     },
   ): Promise<Response> => {
-    const query = buildQuery(
-      queryParamNames,
-      params,
-      request.includePathSlugFallback === true ? { includePathSlugFallback: true } : {},
-    );
+    const query = buildQuery(queryParamNames, params);
     const headers = buildHeaders({
       ...(typeof request.locale === "string" ? { locale: request.locale } : {}),
       ...(typeof request.channelId === "string" ? { channelId: request.channelId } : {}),
@@ -553,7 +538,6 @@ export function createCmsClient(options: CmsClientOptions): CmsClient {
           ...(typeof input.channelId === "string" ? { channelId: input.channelId } : {}),
           ...(typeof input.requestId === "string" ? { requestId: input.requestId } : {}),
           allowNotFound: true,
-          includePathSlugFallback: true,
         },
       );
 

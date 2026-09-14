@@ -41,7 +41,7 @@ export function buildOminityDebugGetResponse(
   options: OminityDebugRouteOptions,
 ): Response {
   if (!options.enabled) {
-    return Response.json({ error: "Debug bar disabled." }, { status: 404 });
+    return Response.json({ error: "Dev Tool disabled." }, { status: 404 });
   }
 
   const url = new URL(request.url);
@@ -63,7 +63,7 @@ export function buildOminityDebugGetResponse(
 
 export function buildOminityDebugDeleteResponse(options: OminityDebugRouteOptions): Response {
   if (!options.enabled) {
-    return Response.json({ error: "Debug bar disabled." }, { status: 404 });
+    return Response.json({ error: "Dev Tool disabled." }, { status: 404 });
   }
 
   clearOminityDebugEntries();

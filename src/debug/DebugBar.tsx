@@ -7,8 +7,14 @@ import {
   useState,
   type ChangeEvent,
 } from "react";
+import { useParams, usePathname } from "next/navigation.js";
 
 import { useOminityDebugSnapshot } from "./context.js";
+import {
+  countOminityDevToolErrors,
+  createOminityDevToolSnapshot,
+} from "./dev-tool.js";
+import { OminityDevToolLogo } from "./OminityDevToolLogo.js";
 import {
   entryMatchesRequestGroup,
   entryMatchesSearch,
@@ -102,7 +108,6 @@ export function OminityDebugBar(props: OminityDebugBarProps) {
   const [theme, setTheme] = useState<OminityDebugTheme>(props.theme ?? "system");
   const [entries, setEntries] = useState<ReadonlyArray<OminityDebugEntry>>([]);
   const [requestGroups, setRequestGroups] = useState<ReadonlyArray<OminityDebugRequestGroup>>([]);
-  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedRequestId, setSelectedRequestId] = useState<RequestGroupSelection>("latest");
@@ -113,9 +118,15 @@ export function OminityDebugBar(props: OminityDebugBarProps) {
   const systemDark = useSystemDarkMode();
   const palette = resolvePalette(theme, systemDark);
   const autoSnapshot = useOminityDebugSnapshot();
+  const pathname = usePathname();
+  const params = useParams();
+  const [browserMetadata, setBrowserMetadata] = useState<{
+    readonly appName?: string;
+    readonly locale?: string;
+  }>({});
 
   const endpoint = props.endpoint ?? "/api/debug/sdk-requests";
-  const title = props.title ?? "Ominity Debug";
+  const title = props.title ?? "Ominity Dev Tool";
   const source = props.source ?? "all";
   const limit = Number.isFinite(props.limit) && (props.limit ?? 0) > 0
     ? Math.floor(props.limit!)
@@ -133,13 +144,40 @@ export function OminityDebugBar(props: OminityDebugBarProps) {
     }
   }, [props.theme]);
 
+  useEffect(() => {
+    const applicationName = document.querySelector<HTMLMetaElement>('meta[name="application-name"]')?.content
+      || document.title;
+    const documentLocale = document.documentElement.lang;
+
+    setBrowserMetadata({
+      ...(applicationName ? { appName: applicationName } : {}),
+      ...(documentLocale ? { locale: documentLocale } : {}),
+    });
+  }, []);
+
+  const routeLocale = typeof params?.locale === "string"
+    ? params.locale
+    : browserMetadata.locale;
+  const defaultSnapshot = useMemo(() => createOminityDevToolSnapshot({
+    ...(browserMetadata.appName ? { appName: browserMetadata.appName } : {}),
+    environment: "unknown",
+    runtime: "Browser",
+    ...(pathname ? { route: pathname } : {}),
+    ...(routeLocale ? { locale: routeLocale } : {}),
+    enabled: props.enabled,
+  }), [browserMetadata.appName, pathname, props.enabled, routeLocale]);
+
   const resolvedDebugInfo = useMemo<OminityDebugSnapshot>(() => ({
-    ...(props.integration ?? autoSnapshot.integration ? {
-      integration: props.integration ?? autoSnapshot.integration,
-    } : {}),
-    ...(props.health ?? autoSnapshot.health ? {
-      health: props.health ?? autoSnapshot.health,
-    } : {}),
+    integration: {
+      ...defaultSnapshot.integration,
+      ...autoSnapshot.integration,
+      ...props.integration,
+    },
+    health: {
+      ...defaultSnapshot.health,
+      ...autoSnapshot.health,
+      ...props.health,
+    },
     ...(props.channel ?? autoSnapshot.channel ? {
       channel: props.channel ?? autoSnapshot.channel,
     } : {}),
@@ -169,6 +207,7 @@ export function OminityDebugBar(props: OminityDebugBarProps) {
     } : {}),
   }), [
     autoSnapshot,
+    defaultSnapshot,
     props.auth,
     props.cache,
     props.channel,
@@ -200,16 +239,15 @@ export function OminityDebugBar(props: OminityDebugBarProps) {
         cache: "no-store",
       });
       if (!response.ok) {
-        throw new Error(`Debug endpoint returned ${response.status}`);
+        throw new Error(`Dev Tool endpoint returned ${response.status}`);
       }
 
       const payload = await response.json() as OminityDebugListResponse;
       setEntries(Array.isArray(payload.entries) ? payload.entries : []);
       setRequestGroups(Array.isArray(payload.requestGroups) ? payload.requestGroups : []);
-      setTotal(typeof payload.total === "number" ? payload.total : 0);
       setLastError(null);
     } catch (error) {
-      setLastError(error instanceof Error ? error.message : "Failed to load debug entries.");
+      setLastError(error instanceof Error ? error.message : "Failed to load Dev Tool requests.");
     } finally {
       setLoading(false);
     }
@@ -254,6 +292,11 @@ export function OminityDebugBar(props: OminityDebugBarProps) {
   }, [entries, requestGroups, searchQuery, selectedRequestId, sourceFilter, statusFilter]);
 
   const stats = useMemo(() => requestStats(entries, visibleEntries.length), [entries, visibleEntries.length]);
+  const errorCount = useMemo(() => countOminityDevToolErrors(
+    resolvedDebugInfo,
+    stats.errors,
+    lastError,
+  ), [lastError, resolvedDebugInfo, stats.errors]);
 
   const snapshot = useMemo<OminityDebugSnapshotInput>(() => ({
     generatedAt: new Date().toISOString(),
@@ -307,18 +350,25 @@ export function OminityDebugBar(props: OminityDebugBarProps) {
         <button
           type="button"
           onClick={() => setOpen(true)}
+          aria-label={errorCount > 0
+            ? `Open ${title}: ${errorCount} ${errorCount === 1 ? "error" : "errors"}`
+            : `Open ${title}`}
+          title={errorCount > 0
+            ? `${title}: ${errorCount} ${errorCount === 1 ? "error" : "errors"}`
+            : title}
           style={{
             marginLeft: "auto",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
             gap: "7px",
-            border: `1px solid ${palette.border}`,
-            borderRadius: "8px",
-            backgroundColor: palette.panel,
-            color: palette.text,
-            height: "38px",
-            padding: "0 12px",
+            border: `1px solid ${errorCount > 0 ? palette.danger : palette.border}`,
+            borderRadius: "999px",
+            backgroundColor: errorCount > 0 ? palette.dangerSoft : palette.panel,
+            color: errorCount > 0 ? palette.danger : palette.text,
+            height: "42px",
+            minWidth: "42px",
+            padding: errorCount > 0 ? "0 13px 0 9px" : 0,
             fontSize: "12px",
             fontWeight: 700,
             cursor: "pointer",
@@ -326,8 +376,10 @@ export function OminityDebugBar(props: OminityDebugBarProps) {
             backdropFilter: "blur(8px)",
           }}
         >
-          <span>{title}</span>
-          <span style={pillStyle(palette, stats.errors > 0 ? "danger" : "default")}>{total}</span>
+          <OminityDevToolLogo size={27} />
+          {errorCount > 0 && (
+            <span>{errorCount} {errorCount === 1 ? "error" : "errors"}</span>
+          )}
         </button>
       ) : (
         <div
@@ -343,10 +395,13 @@ export function OminityDebugBar(props: OminityDebugBarProps) {
         >
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: `1px solid ${palette.border}`, padding: "9px 10px" }}>
             <div style={{ display: "flex", alignItems: "center", gap: "8px", minWidth: 0 }}>
+              <OminityDevToolLogo size={22} />
               <div style={{ fontSize: "13px", fontWeight: 800, color: palette.text, whiteSpace: "nowrap" }}>{title}</div>
-              <span style={pillStyle(palette, stats.errors > 0 ? "danger" : "success")}>
-                {stats.errors} errors
-              </span>
+              {errorCount > 0 && (
+                <span style={pillStyle(palette, "danger")}>
+                  {errorCount} {errorCount === 1 ? "error" : "errors"}
+                </span>
+              )}
               <span style={pillStyle(palette)}>{stats.total} calls</span>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>

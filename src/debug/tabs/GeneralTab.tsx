@@ -30,7 +30,7 @@ export function GeneralTab(props: {
     <div style={{ display: "grid", gap: "10px" }}>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: "8px" }}>
         <Metric palette={props.palette} label="Captured" value={props.stats.total} />
-        <Metric palette={props.palette} label="Errors" value={props.stats.errors} tone={props.stats.errors > 0 ? "danger" : "success"} />
+        <Metric palette={props.palette} label="Request errors" value={props.stats.errors} tone={props.stats.errors > 0 ? "danger" : "success"} />
         <Metric palette={props.palette} label="Average" value={`${props.stats.averageMs}ms`} />
         <Metric palette={props.palette} label="Slowest" value={`${props.stats.slowestMs}ms`} tone={props.stats.slowestMs > 1000 ? "warning" : "default"} />
       </div>
@@ -57,8 +57,12 @@ export function GeneralTab(props: {
           <Field palette={props.palette} label="Base path" value={props.integration?.basePath} mono />
           <Field palette={props.palette} label="Mock data" value={props.integration?.mockData} />
           <Field palette={props.palette} label="Debug logs" value={props.integration?.debugLogs} />
-          <Field palette={props.palette} label="Debug bar" value={props.integration?.debugBar ?? true} />
-          <Field palette={props.palette} label="Debug endpoint" value={props.endpoint} mono />
+          <Field
+            palette={props.palette}
+            label="Dev Tool"
+            value={props.integration?.devTool ?? props.integration?.debugBar ?? true}
+          />
+          <Field palette={props.palette} label="Dev Tool endpoint" value={props.endpoint} mono />
           <Field palette={props.palette} label="Request source" value={props.source} mono />
           <Field palette={props.palette} label="Request limit" value={props.limit} mono />
           <Field palette={props.palette} label="Latest request" value={formatDateTime(props.stats.latestAt)} />

@@ -1,15 +1,85 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { test } from "node:test";
+import { SDK_VERSION } from "@ominity/api-typescript";
 
 import {
+  OMINITY_NEXT_PACKAGE_VERSION,
   buildOminityDebugDeleteResponse,
   buildOminityDebugGetResponse,
   clearOminityDebugEntries,
+  countOminityDevToolErrors,
+  createOminityDevToolChannelInfo,
+  createOminityDevToolSnapshot,
   createOminityDebugRequestContext,
   createOminityDebugFetcher,
   listOminityDebugEntries,
   listOminityDebugRequestGroups,
 } from "../dist/debug/index.js";
+
+test("Dev Tool channel info uses the current channel as its locale source", () => {
+  const channel = createOminityDevToolChannelInfo({
+    channel: {
+      id: "12",
+      identifier: "storefront",
+      name: "Storefront",
+      defaultLanguageCode: "nl-BE",
+      defaultCountryCode: "BE",
+      defaultCurrencyCode: "EUR",
+      languages: [
+        { id: "1", code: "nl-BE", name: "Nederlands", active: true, default: true },
+        { id: "2", code: "en", name: "English", active: true },
+      ],
+      countries: [{ code: "BE", name: "Belgium", currency: "EUR", enabled: true, default: true }],
+      currencies: [{ code: "EUR", name: "Euro", symbol: "€", default: true }],
+    },
+    source: "detected",
+    defaultLocale: "nl-BE",
+    locales: [
+      { code: "nl-BE", language: "nl", country: "BE", label: "Nederlands", default: true },
+      { code: "en", language: "en", label: "English" },
+    ],
+    languages: ["nl", "en"],
+    countries: ["BE"],
+    currencies: ["EUR"],
+    countryCurrencyMap: { BE: "EUR" },
+  });
+
+  assert.equal(channel.id, "12");
+  assert.equal(channel.source, "detected");
+  assert.equal(channel.defaultLocale, "nl-BE");
+  assert.deepEqual(channel.locales.map((locale) => locale.code), ["nl-BE", "en"]);
+  assert.deepEqual(channel.languages.map((language) => language.code), ["nl-BE", "en"]);
+  assert.deepEqual(channel.countryCurrencyMap, { BE: "EUR" });
+});
+
+test("Dev Tool supplies package metadata and actionable configuration health", async () => {
+  const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
+  const snapshot = createOminityDevToolSnapshot({
+    appName: "Storefront",
+    environment: "development",
+    runtime: "Browser",
+    nextVersion: "16.2.9",
+    mockData: false,
+    requiredEnvironment: [
+      { name: "OMINITY_API_URL", value: "https://example.ominity.test/api" },
+      { name: "OMINITY_API_KEY", value: "" },
+    ],
+    unsafeWarnings: ["Example warning", "Example warning"],
+  });
+
+  assert.equal(OMINITY_NEXT_PACKAGE_VERSION, packageJson.version);
+  assert.equal(snapshot.integration.packageVersion, packageJson.version);
+  assert.equal(snapshot.integration.packageName, "@ominity/next");
+  assert.equal(snapshot.integration.sdkVersion, SDK_VERSION);
+  assert.equal(snapshot.health.mode, "live");
+  assert.deepEqual(snapshot.health.missingEnvironment, ["OMINITY_API_KEY"]);
+  assert.deepEqual(snapshot.health.unsafeWarnings, ["Example warning"]);
+  assert.equal(snapshot.health.checks[0].status, "enabled");
+  assert.equal(snapshot.health.checks[1].status, "disabled");
+  assert.equal(snapshot.health.checks[1].severity, "error");
+  assert.equal(countOminityDevToolErrors(snapshot, 2, "Endpoint unavailable"), 4);
+});
 
 test("debug fetcher captures Ominity requests with redacted sensitive headers", async () => {
   const originalFetch = globalThis.fetch;

@@ -797,6 +797,8 @@ export function normalizeChannel(input: unknown): CmsChannel {
   const idRaw = asId(value.id);
   const identifier = asString(value.identifier);
   const name = asString(value.name);
+  const active = asBoolean(value.isActive);
+  const maintenance = asBoolean(value.isMaintenance);
 
   if (!idRaw || !identifier || !name) {
     throw new CmsNormalizationError("CMS channel payload is missing required fields", {
@@ -808,13 +810,14 @@ export function normalizeChannel(input: unknown): CmsChannel {
     });
   }
 
-  const languages = asArray(value.languages ?? (isRecord(value._embedded) ? value._embedded.languages : undefined))
+  const embedded = isRecord(value._embedded) ? value._embedded : undefined;
+  const languages = asArray(value.languages ?? embedded?.languages)
     .map((entry) => normalizeChannelLanguage(entry))
     .filter((entry): entry is CmsChannelLanguage => entry !== null);
-  const countries = asArray(value.countries ?? (isRecord(value._embedded) ? value._embedded.countries : undefined))
+  const countries = asArray(value.countries ?? embedded?.countries)
     .map((entry) => normalizeChannelCountry(entry))
     .filter((entry): entry is CmsChannelCountry => entry !== null);
-  const currencies = asArray(value.currencies ?? (isRecord(value._embedded) ? value._embedded.currencies : undefined))
+  const currencies = asArray(value.currencies ?? embedded?.currencies)
     .map((entry) => normalizeChannelCurrency(entry))
     .filter((entry): entry is CmsChannelCurrency => entry !== null);
 
@@ -866,16 +869,86 @@ export function normalizeChannel(input: unknown): CmsChannel {
       : {}),
   }));
 
+  const channelType = isRecord(embedded?.type)
+    ? {
+        id: asId(embedded.type.id),
+        technicalName: asString(embedded.type.technicalName),
+        name: asString(embedded.type.name),
+        manufacturer: asString(embedded.type.manufacturer),
+      }
+    : undefined;
+  const domains = asArray(embedded?.domains).flatMap((entry) => {
+    if (!isRecord(entry)) {
+      return [];
+    }
+
+    const url = asString(entry.url);
+    return url ? [{ id: asId(entry.id), url }] : [];
+  });
+  const paymentMethods = asArray(embedded?.payment_methods).flatMap((entry) => {
+    if (!isRecord(entry)) {
+      return [];
+    }
+
+    const id = asId(entry.id);
+    const label = asString(entry.label);
+    const method = asString(entry.method);
+    if (!id && !label && !method) {
+      return [];
+    }
+
+    return [{
+      ...(id ? { id } : {}),
+      ...(label ? { label } : {}),
+      ...(method ? { method } : {}),
+      ...(typeof asBoolean(entry.isEnabled) === "boolean"
+        ? { active: asBoolean(entry.isEnabled) }
+        : {}),
+    }];
+  });
+  const shippingMethods = asArray(embedded?.shipping_methods).flatMap((entry) => {
+    if (!isRecord(entry)) {
+      return [];
+    }
+
+    const id = asId(entry.id);
+    const methodName = asString(entry.name);
+    if (!id && !methodName) {
+      return [];
+    }
+
+    return [{
+      ...(id ? { id } : {}),
+      ...(methodName ? { name: methodName } : {}),
+      ...(typeof asBoolean(entry.isEnabled) === "boolean"
+        ? { active: asBoolean(entry.isEnabled) }
+        : {}),
+    }];
+  });
+  const bindCustomersToChannel = asBoolean(value.bindCustomersToChannel);
+  const taxCalculationType = asString(value.taxCalculationType);
+
   return {
     id: idRaw,
     identifier,
     name,
+    ...(typeof active === "boolean" ? { active } : {}),
+    ...(typeof maintenance === "boolean" ? { maintenance } : {}),
     ...(normalizedDefaultLanguageCode ? { defaultLanguageCode: normalizedDefaultLanguageCode } : {}),
     ...(normalizedDefaultCountryCode ? { defaultCountryCode: normalizedDefaultCountryCode } : {}),
     ...(normalizedDefaultCurrencyCode ? { defaultCurrencyCode: normalizedDefaultCurrencyCode } : {}),
     languages: normalizedLanguages,
     countries: normalizedCountries,
     currencies: normalizedCurrencies,
+    details: {
+      ...(channelType ? { type: channelType } : {}),
+      ...(domains.length > 0 ? { domains } : {}),
+      ...(paymentMethods.length > 0 ? { paymentMethods } : {}),
+      ...(shippingMethods.length > 0 ? { shippingMethods } : {}),
+      ...(typeof bindCustomersToChannel === "boolean" ? { bindCustomersToChannel } : {}),
+      ...(taxCalculationType ? { taxCalculationType } : {}),
+      ...(typeof maintenance === "boolean" ? { maintenance } : {}),
+    },
   };
 }
 

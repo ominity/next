@@ -15,7 +15,6 @@ import { createOminityCustomerAccountsRouteHandlers } from "@ominity/next/custom
 
 const handlers = createOminityCustomerAccountsRouteHandlers({
   ominityBaseUrl: process.env.OMINITY_API_URL,
-  channelId: process.env.OMINITY_CHANNEL_ID,
   authClientId: process.env.OMINITY_AUTH_CLIENT_ID,
   authClientSecret: process.env.OMINITY_AUTH_CLIENT_SECRET,
   authSessionSecret: process.env.OMINITY_AUTH_SESSION_SECRET,

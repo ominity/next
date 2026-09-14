@@ -1,7 +1,38 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { HTTPClient } from "@ominity/api-typescript";
 
 import { createCommerceClient } from "../dist/commerce/index.js";
+
+test("createCommerceClient forwards a flat camelCase cart item body through the SDK", async () => {
+  let forwardedRequest;
+  const client = createCommerceClient({
+    sdk: {
+      serverURL: "https://example.ominity.test/api",
+      httpClient: new HTTPClient({
+        fetcher: async (request) => {
+          forwardedRequest = request.clone();
+          return new Response(JSON.stringify({ id: "item-1" }), {
+            status: 201,
+            headers: { "content-type": "application/hal+json" },
+          });
+        },
+      }),
+    },
+  });
+
+  await client.createCartItem({ cartId: "cart-1", productId: "6", quantity: 1 });
+
+  assert.ok(forwardedRequest instanceof Request);
+  assert.equal(
+    new URL(forwardedRequest.url).pathname,
+    "/api/v1/commerce/carts/cart-1/items",
+  );
+  assert.deepEqual(JSON.parse(await forwardedRequest.text()), {
+    productId: "6",
+    quantity: 1,
+  });
+});
 
 test("createCommerceClient returns SDK-shaped cart and cart item payloads via adapter", async () => {
   const client = createCommerceClient({

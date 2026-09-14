@@ -111,7 +111,7 @@ export function AuthTab(props: {
   if (!auth && !customer) {
     return (
       <EmptyState palette={props.palette}>
-        Pass `auth` and `customer` context into `OminityDebugBar` to inspect sessions, MFA, memberships, and test-only auth actions.
+        Add the auth and customer providers to inspect sessions, MFA, memberships, and test-only auth actions.
       </EmptyState>
     );
   }
@@ -262,7 +262,7 @@ export function AuthTab(props: {
             </button>
           </form>
           {!auth?.actions?.signIn && (
-            <p style={mutedTextStyle(props.palette)}>Wire `auth.actions.signIn` to enable browser sign-in from the debug bar.</p>
+            <p style={mutedTextStyle(props.palette)}>Wire `auth.actions.signIn` to enable browser sign-in from the Dev Tool.</p>
           )}
         </Panel>
 

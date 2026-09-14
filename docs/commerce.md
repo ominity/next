@@ -16,7 +16,6 @@ import { createOminityCommerceRouteHandlers } from "@ominity/next/commerce/serve
 export const { GET, POST, PATCH, DELETE } = createOminityCommerceRouteHandlers({
   ominityBaseUrl: process.env.OMINITY_API_URL,
   ominityApiKey: process.env.OMINITY_API_KEY,
-  channelId: process.env.OMINITY_CHANNEL_ID,
   siteUrl: process.env.NEXT_PUBLIC_SITE_URL,
   nodeEnv: process.env.NODE_ENV,
   resolveLanguage: (request) => request.headers.get("x-locale") ?? "en",
@@ -100,7 +99,6 @@ const commerce = createCommerceClient({
   sdk: {
     serverURL: process.env.OMINITY_API_URL ?? "",
     security: { apiKey: process.env.OMINITY_API_KEY ?? "" },
-    channelId: process.env.OMINITY_CHANNEL_ID,
   },
 });
 

@@ -155,6 +155,21 @@ function asRefreshInput(
   };
 }
 
+async function resolveCartIdForMutation(
+  input: MutationInputWithCartData,
+): Promise<string> {
+  const existingCartId = readCartIdCookie(input.cookies, input.cookieOptions);
+  if (existingCartId) {
+    return existingCartId;
+  }
+
+  const cart = await input.client.createCart({
+    ...(input.createCartData ? { data: input.createCartData } : {}),
+  });
+  writeCartIdCookie(input.cookies, cart.id, input.cookieOptions);
+  return cart.id;
+}
+
 async function refreshOrCreateCartSnapshot(
   input: MutationInputWithCartData,
 ): Promise<CommerceCartSnapshot> {
@@ -233,10 +248,10 @@ export async function refreshCommerceCartSnapshot(
 export async function updateCommerceCartAndRefresh(
   input: UpdateCommerceCartAndRefreshInput,
 ): Promise<CommerceCartSnapshot> {
-  const snapshot = await getOrCreateCommerceCartSnapshot(asGetOrCreateInput(input));
+  const cartId = await resolveCartIdForMutation(input);
 
   await input.client.updateCart({
-    cartId: snapshot.cart.id,
+    cartId,
     data: input.data,
   });
 
@@ -246,10 +261,10 @@ export async function updateCommerceCartAndRefresh(
 export async function createCommerceCartItemAndRefresh(
   input: CreateCommerceCartItemAndRefreshInput,
 ): Promise<CommerceCartSnapshot> {
-  const snapshot = await getOrCreateCommerceCartSnapshot(asGetOrCreateInput(input));
+  const cartId = await resolveCartIdForMutation(input);
 
   await input.client.createCartItem({
-    cartId: snapshot.cart.id,
+    cartId,
     productId: input.productId,
     quantity: normalizePositiveQuantity(input.quantity),
     ...(input.data ? { data: input.data } : {}),
@@ -261,10 +276,10 @@ export async function createCommerceCartItemAndRefresh(
 export async function updateCommerceCartItemAndRefresh(
   input: UpdateCommerceCartItemAndRefreshInput,
 ): Promise<CommerceCartSnapshot> {
-  const snapshot = await getOrCreateCommerceCartSnapshot(asGetOrCreateInput(input));
+  const cartId = await resolveCartIdForMutation(input);
 
   await input.client.updateCartItem({
-    cartId: snapshot.cart.id,
+    cartId,
     itemId: input.itemId,
     data: input.data,
   });
@@ -275,17 +290,17 @@ export async function updateCommerceCartItemAndRefresh(
 export async function setCommerceCartItemQuantityAndRefresh(
   input: SetCommerceCartItemQuantityAndRefreshInput,
 ): Promise<CommerceCartSnapshot> {
-  const snapshot = await getOrCreateCommerceCartSnapshot(asGetOrCreateInput(input));
+  const cartId = await resolveCartIdForMutation(input);
   const quantity = Number.isFinite(input.quantity) ? Math.floor(input.quantity) : 1;
 
   if (quantity <= 0) {
     await input.client.deleteCartItem({
-      cartId: snapshot.cart.id,
+      cartId,
       itemId: input.itemId,
     });
   } else {
     await input.client.updateCartItem({
-      cartId: snapshot.cart.id,
+      cartId,
       itemId: input.itemId,
       data: {
         quantity,
@@ -299,10 +314,10 @@ export async function setCommerceCartItemQuantityAndRefresh(
 export async function deleteCommerceCartItemAndRefresh(
   input: DeleteCommerceCartItemAndRefreshInput,
 ): Promise<CommerceCartSnapshot> {
-  const snapshot = await getOrCreateCommerceCartSnapshot(asGetOrCreateInput(input));
+  const cartId = await resolveCartIdForMutation(input);
 
   await input.client.deleteCartItem({
-    cartId: snapshot.cart.id,
+    cartId,
     itemId: input.itemId,
   });
 

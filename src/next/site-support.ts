@@ -1,4 +1,4 @@
-import { HTTPClient, type Fetcher } from "@ominity/api-typescript";
+import { HTTPClient } from "@ominity/api-typescript";
 
 import {
   createCmsClient,
@@ -26,8 +26,10 @@ import {
   type StringLinkStrategy,
 } from "../cms/index.js";
 import {
+  createOminityDevToolChannelInfo,
   getCachedOminityDebugFetcher,
   getCachedOminityDebugHttpClient,
+  type OminityDebugChannelInfo,
   type OminityDebugSource,
 } from "../debug/index.js";
 
@@ -112,40 +114,6 @@ function defaultFetcher(input: RequestInfo | URL, init?: RequestInit): Promise<R
   return fetch(input, init);
 }
 
-function sanitizeCmsPagesPathQuery(input: RequestInfo | URL): RequestInfo | URL {
-  const sanitizeUrl = (url: URL): URL => {
-    if (!url.pathname.endsWith("/cms/pages")) {
-      return url;
-    }
-
-    url.searchParams.delete("path");
-    return url;
-  };
-
-  if (input instanceof URL) {
-    return sanitizeUrl(new URL(input.toString()));
-  }
-
-  if (typeof input === "string") {
-    try {
-      return sanitizeUrl(new URL(input)).toString();
-    } catch {
-      return input;
-    }
-  }
-
-  if (input instanceof Request) {
-    const sanitizedUrl = sanitizeUrl(new URL(input.url));
-    if (sanitizedUrl.toString() === input.url) {
-      return input;
-    }
-
-    return new Request(sanitizedUrl, input);
-  }
-
-  return input;
-}
-
 function normalizeConfiguredLocales(
   locales: ReadonlyArray<CmsLocale>,
   fallbackLocale: string,
@@ -189,9 +157,10 @@ export interface OminitySiteSupportConfig {
   readonly channelId?: string;
   readonly useMockData: boolean;
   readonly debugLogs?: boolean;
+  readonly devTool?: boolean;
   readonly debugBar?: boolean;
-  readonly defaultLocale: string;
-  readonly locales: ReadonlyArray<CmsLocale>;
+  readonly defaultLocale?: string;
+  readonly locales?: ReadonlyArray<CmsLocale>;
   readonly localeSegmentStrategy: CmsLocaleSegmentStrategy;
   readonly canonicalRedirectPolicy: CmsCanonicalRedirectPolicy;
   readonly stringLinkStrategy: StringLinkStrategy;
@@ -225,6 +194,7 @@ export interface OminitySiteSupportOptions {
   readonly getConfig: () => OminitySiteSupportConfig;
   readonly mockClient?: CmsClient;
   readonly routeResolvers?: Readonly<Record<string, CmsRouteLinkResolver>>;
+  /** @deprecated CMS page requests now use only the supported `filter[slug]` query parameter. */
   readonly stripCmsPagesPathQuery?: boolean;
   readonly cmsNormalizers?: Partial<CmsResponseNormalizers>;
 }
@@ -233,6 +203,7 @@ export interface OminitySiteSupport {
   readonly cmsRouting: CmsRoutingConfig;
   readonly cmsLinkResolver: CmsLinkResolver;
   readonly cmsLocalizedStringLinkResolver: CmsLinkResolver;
+  getDevToolHttpClient(source: OminityDebugSource): HTTPClient | undefined;
   getDebugHttpClient(source: OminityDebugSource): HTTPClient | undefined;
   getLiveCmsClient(): CmsClient;
   getCmsClient(): CmsClient;
@@ -240,7 +211,9 @@ export interface OminitySiteSupport {
   getCmsRoutes(input?: CmsGetRoutesInput): Promise<ReadonlyArray<CmsRoute>>;
   getCmsMenus(input?: CmsGetMenusInput): Promise<ReadonlyArray<CmsMenu>>;
   getMainMenu(locale?: string): Promise<CmsMenu | null>;
+  getCurrentChannel(): Promise<CmsChannel | null>;
   getChannelContext(): Promise<OminityChannelContext>;
+  getDevToolChannelInfo(): Promise<OminityDebugChannelInfo | undefined>;
   getSupportedLocales(): Promise<ReadonlyArray<CmsLocale>>;
   getChannelAwareCmsRouting(): Promise<CmsRoutingConfig>;
   resolveRequestLocale(request: Request): Promise<string | undefined>;
@@ -308,14 +281,19 @@ function buildChannelContext(
     };
   },
 ): OminityChannelContext {
-  const normalizedLocales = normalizeConfiguredLocales(input.locales, input.config.defaultLocale);
+  const configuredLocales = input.config.locales ?? [];
+  const fallbackLocale = input.config.defaultLocale
+    ?? configuredLocales.find((locale) => locale.default === true)?.code
+    ?? configuredLocales[0]?.code
+    ?? "en";
+  const normalizedLocales = normalizeConfiguredLocales(input.locales, fallbackLocale);
   const defaultLocale = chooseDefaultLocale(
     normalizedLocales,
     {
       defaultLanguageCode: input.channel?.defaultLanguageCode,
       defaultCountry: input.channel?.defaultCountryCode,
     },
-    input.config.defaultLocale,
+    fallbackLocale,
   );
 
   const locales = normalizedLocales.map((locale) => ({
@@ -537,13 +515,19 @@ export function createOminitySiteSupport(
 ): OminitySiteSupport {
   let cachedLiveClient: CmsClient | null = null;
   let cachedCmsHttpClient: HTTPClient | null = null;
+  let cachedCurrentChannelPromise: Promise<CmsChannel | null> | null = null;
   let cachedChannelContextPromise: Promise<OminityChannelContext> | null = null;
   let cachedChannelAwareRoutingPromise: Promise<CmsRoutingConfig> | null = null;
 
   const baseConfig = options.getConfig();
+  const baseLocales = baseConfig.locales ?? [];
+  const baseDefaultLocale = baseConfig.defaultLocale
+    ?? baseLocales.find((locale) => locale.default === true)?.code
+    ?? baseLocales[0]?.code
+    ?? "en";
   const cmsRouting = createRoutingConfig({
-    defaultLocale: baseConfig.defaultLocale,
-    locales: baseConfig.locales,
+    defaultLocale: baseDefaultLocale,
+    locales: baseLocales,
     localeSegmentStrategy: baseConfig.localeSegmentStrategy,
     canonicalRedirectPolicy: baseConfig.canonicalRedirectPolicy,
     trailingSlash: baseConfig.trailingSlash,
@@ -561,11 +545,14 @@ export function createOminitySiteSupport(
   });
 
   const getDebugHttpClient = (source: OminityDebugSource): HTTPClient | undefined => {
+    const config = options.getConfig();
+    const enabled = config.devTool ?? config.debugBar;
     return getCachedOminityDebugHttpClient({
       source,
-      ...(typeof options.getConfig().debugBar === "boolean" ? { enabled: options.getConfig().debugBar } : {}),
+      ...(typeof enabled === "boolean" ? { enabled } : {}),
     });
   };
+  const getDevToolHttpClient = getDebugHttpClient;
 
   const getCmsHttpClient = (): HTTPClient => {
     if (cachedCmsHttpClient) {
@@ -573,19 +560,12 @@ export function createOminitySiteSupport(
     }
 
     const config = options.getConfig();
+    const devToolEnabled = config.devTool ?? config.debugBar;
     const debugFetcher = getCachedOminityDebugFetcher({
       source: "cms",
-      ...(typeof config.debugBar === "boolean" ? { enabled: config.debugBar } : {}),
+      ...(typeof devToolEnabled === "boolean" ? { enabled: devToolEnabled } : {}),
     });
-    const baseFetcher = debugFetcher ?? defaultFetcher;
-    const fetcher: Fetcher = async (input: RequestInfo | URL, init?: RequestInit) => {
-      const requestInput = options.stripCmsPagesPathQuery === true
-        ? sanitizeCmsPagesPathQuery(input)
-        : input;
-      return baseFetcher(requestInput, init);
-    };
-
-    cachedCmsHttpClient = new HTTPClient({ fetcher });
+    cachedCmsHttpClient = new HTTPClient({ fetcher: debugFetcher ?? defaultFetcher });
     return cachedCmsHttpClient;
   };
 
@@ -686,6 +666,17 @@ export function createOminitySiteSupport(
     return menus[0] ?? null;
   };
 
+  const getCurrentChannel = async (): Promise<CmsChannel | null> => {
+    if (cachedCurrentChannelPromise) {
+      return cachedCurrentChannelPromise;
+    }
+
+    cachedCurrentChannelPromise = Promise.resolve()
+      .then(() => getCmsClient().getChannel())
+      .catch(() => null);
+    return cachedCurrentChannelPromise;
+  };
+
   const getChannelContext = async (): Promise<OminityChannelContext> => {
     if (cachedChannelContextPromise) {
       return cachedChannelContextPromise;
@@ -693,25 +684,15 @@ export function createOminitySiteSupport(
 
     cachedChannelContextPromise = (async () => {
       const config = options.getConfig();
+      const configuredLocales = config.locales ?? [];
       const fallback = buildChannelContext({
         config,
-        locales: config.locales,
+        locales: configuredLocales,
       });
 
       try {
-        const client = getCmsClient();
-        const [localesResult, channelResult] = await Promise.allSettled([
-          client.getLocales(),
-          client.getChannel(),
-        ]);
-
-        const availableLocales = localesResult.status === "fulfilled"
-          ? localesResult.value
-          : config.locales;
-        const channelResource = channelResult.status === "fulfilled"
-          ? channelResult.value
-          : null;
-        const locales = localesForChannel(channelResource, availableLocales);
+        const channelResource = await getCurrentChannel();
+        const locales = localesForChannel(channelResource, configuredLocales);
         const channel = channelResource
           ? {
               id: channelResource.id,
@@ -743,6 +724,28 @@ export function createOminitySiteSupport(
     })();
 
     return cachedChannelContextPromise;
+  };
+
+  const getDevToolChannelInfo = async (): Promise<OminityDebugChannelInfo | undefined> => {
+    const [channel, context] = await Promise.all([
+      getCurrentChannel(),
+      getChannelContext(),
+    ]);
+    if (!channel) {
+      return undefined;
+    }
+
+    const config = options.getConfig();
+    return createOminityDevToolChannelInfo({
+      channel,
+      defaultLocale: context.defaultLocale,
+      locales: context.locales,
+      languages: context.languages,
+      countries: context.countries,
+      currencies: context.currencies,
+      countryCurrencyMap: context.countryCurrencyMap,
+      source: config.useMockData ? "mock" : "detected",
+    });
   };
 
   const getChannelAwareCmsRouting = async (): Promise<CmsRoutingConfig> => {
@@ -986,6 +989,7 @@ export function createOminitySiteSupport(
   const resetCaches = (): void => {
     cachedLiveClient = null;
     cachedCmsHttpClient = null;
+    cachedCurrentChannelPromise = null;
     cachedChannelContextPromise = null;
     cachedChannelAwareRoutingPromise = null;
   };
@@ -994,6 +998,7 @@ export function createOminitySiteSupport(
     cmsRouting,
     cmsLinkResolver,
     cmsLocalizedStringLinkResolver,
+    getDevToolHttpClient,
     getDebugHttpClient,
     getLiveCmsClient,
     getCmsClient,
@@ -1001,7 +1006,9 @@ export function createOminitySiteSupport(
     getCmsRoutes,
     getCmsMenus,
     getMainMenu,
+    getCurrentChannel,
     getChannelContext,
+    getDevToolChannelInfo,
     getSupportedLocales,
     getChannelAwareCmsRouting,
     resolveRequestLocale,

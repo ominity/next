@@ -76,7 +76,7 @@ function snapshotText(input: OminityDebugSnapshotInput): string {
 function bugReportText(input: OminityDebugSnapshotInput): string {
   const errorEntries = input.entries.filter((entry) => !entry.ok || (typeof entry.status === "number" && entry.status >= 400));
   return [
-    "# Ominity Debug Snapshot",
+    "# Ominity Dev Tool Snapshot",
     "",
     `Generated: ${input.generatedAt}`,
     `App: ${input.integration?.appName ?? "n/a"}`,
@@ -148,7 +148,7 @@ export function ToolsTab(props: {
       )}
 
       <Panel palette={props.palette}>
-        <h3 style={sectionTitleStyle(props.palette)}>Debug Snapshot</h3>
+        <h3 style={sectionTitleStyle(props.palette)}>Dev Tool Snapshot</h3>
         <p style={mutedTextStyle(props.palette)}>
           Export includes the current debug props, grouped requests, and captured SDK calls with sensitive headers already redacted by the fetcher.
         </p>

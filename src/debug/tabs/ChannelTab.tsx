@@ -56,7 +56,7 @@ export function ChannelTab(props: {
   if (!props.channel) {
     return (
       <EmptyState palette={props.palette}>
-        Pass `channel` details into `OminityDebugBar` to inspect the detected or configured Ominity channel.
+        Add channel details to inspect the detected or configured Ominity channel.
       </EmptyState>
     );
   }

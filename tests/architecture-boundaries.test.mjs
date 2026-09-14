@@ -82,11 +82,10 @@ test("channel normalization accepts numeric SDK channel and language ids", () =>
 });
 
 test("site support uses active current-channel languages as locale source of truth", async () => {
+  let currentChannelRequests = 0;
   const support = createOminitySiteSupport({
     getConfig: () => ({
       useMockData: true,
-      defaultLocale: "en",
-      locales: [{ code: "en", language: "en", default: true }],
       localeSegmentStrategy: "language",
       canonicalRedirectPolicy: "if-not-canonical",
       stringLinkStrategy: "passthrough",
@@ -95,12 +94,10 @@ test("site support uses active current-channel languages as locale source of tru
     }),
     mockClient: {
       async getLocales() {
-        return [
-          { code: "en", language: "en", default: true },
-          { code: "fr", language: "fr" },
-        ];
+        throw new Error("Channel locale resolution must not use a separate locale source");
       },
       async getChannel() {
+        currentChannelRequests += 1;
         return {
           id: "12",
           identifier: "web",
@@ -121,6 +118,14 @@ test("site support uses active current-channel languages as locale source of tru
   const locales = await support.getSupportedLocales();
   assert.deepEqual(locales.map((locale) => locale.code), ["nl-BE", "en"]);
   assert.equal(locales.find((locale) => locale.code === "nl-BE")?.default, true);
+
+  const channel = await support.getDevToolChannelInfo();
+  assert.equal(channel.id, "12");
+  assert.equal(channel.name, "Website");
+  assert.equal(channel.source, "mock");
+  assert.equal(channel.defaultLocale, "nl-BE");
+  assert.deepEqual(channel.locales.map((locale) => locale.code), ["nl-BE", "en"]);
+  assert.equal(currentChannelRequests, 1);
 });
 
 test("CMS sitemap emits the configured channel locales and shared XML", () => {

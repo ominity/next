@@ -134,12 +134,15 @@ export interface CmsChannel {
   readonly id: string;
   readonly identifier: string;
   readonly name: string;
+  readonly active?: boolean;
+  readonly maintenance?: boolean;
   readonly defaultLanguageCode?: string;
   readonly defaultCountryCode?: string;
   readonly defaultCurrencyCode?: string;
   readonly languages: ReadonlyArray<CmsChannelLanguage>;
   readonly countries: ReadonlyArray<CmsChannelCountry>;
   readonly currencies: ReadonlyArray<CmsChannelCurrency>;
+  readonly details?: Readonly<Record<string, unknown>>;
 }
 
 export interface CmsRenderContext {

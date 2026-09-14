@@ -1,4 +1,4 @@
-# Debugging and Troubleshooting
+# Development and Troubleshooting
 
 ## Enable client debug logs
 
@@ -13,15 +13,15 @@ const client = createCmsClient({
 
 Debug logs include endpoint, query payload, and normalization milestones.
 
-## Enable the debug bar
+## Enable the Ominity Dev Tool
 
 Create a debug route that exposes the captured SDK calls:
 
 ```ts
-// app/api/debug/sdk-requests/route.ts
-import { createOminityDebugRouteHandlers } from "@ominity/next/debug";
+// app/api/dev-tool/requests/route.ts
+import { createOminityDevToolRouteHandlers } from "@ominity/next/dev-tool";
 
-export const { GET, DELETE } = createOminityDebugRouteHandlers({
+export const { GET, DELETE } = createOminityDevToolRouteHandlers({
   enabled: process.env.NODE_ENV !== "production",
 });
 ```
@@ -34,20 +34,20 @@ Render the bar from a client component:
 import { OminityAuthProvider } from "@ominity/next/auth/react";
 import { OminityCommerceProvider } from "@ominity/next/commerce/react";
 import { OminityCustomerAccountsProvider } from "@ominity/next/customer-accounts/react";
-import { OminityDebugBar, OminityDebugProvider } from "@ominity/next/debug";
+import { OminityDevTool, OminityDevToolProvider } from "@ominity/next/dev-tool";
 import { TrackingProvider } from "@ominity/next/tracking/provider";
 
 export function Providers({ children }: { children: React.ReactNode }) {
   const debugEnabled = process.env.NODE_ENV !== "production";
 
   return (
-    <OminityDebugProvider
+    <OminityDevToolProvider
       enabled={debugEnabled}
       initialSnapshot={{
         integration: {
           appName: "Storefront",
           environment: process.env.NODE_ENV,
-          debugBar: true,
+          devTool: true,
         },
         health: {
           mode: "live",
@@ -66,45 +66,48 @@ export function Providers({ children }: { children: React.ReactNode }) {
           <OminityCommerceProvider>
             <TrackingProvider>
               {children}
-              <OminityDebugBar enabled={debugEnabled} />
+              <OminityDevTool
+                enabled={debugEnabled}
+                endpoint="/api/dev-tool/requests"
+              />
             </TrackingProvider>
           </OminityCommerceProvider>
         </OminityCustomerAccountsProvider>
       </OminityAuthProvider>
-    </OminityDebugProvider>
+    </OminityDevToolProvider>
   );
 }
 ```
 
-The debug bar uses `OminityDebugProvider` as a tiny capability registry.
+The Dev Tool uses `OminityDevToolProvider` as a small capability registry.
 `OminityAuthProvider`, `OminityCustomerAccountsProvider`,
 `OminityCommerceProvider`, and `TrackingProvider` auto-register when present.
 If a project deletes or does not use commerce, auth, customer accounts, CMS page
 rendering, or forms, do not render that provider and the related tab is omitted.
-You can still pass manual props to `OminityDebugBar` or call
-`useOminityDebugCapability()` from an app-owned adapter for project-specific
+You can still pass manual props to `OminityDevTool` or call
+`useOminityDevToolCapability()` from an app-owned adapter for project-specific
 CMS rendering, cache, forms, or spoof-user actions. Explicit bar props override
 registered values, and `auth={false}` or `customer={false}` can hide those
 surfaces.
 
-To capture SDK calls, pass a debug HTTP client into the SDK configuration. Add a
+To capture SDK calls, pass a Dev Tool HTTP client into the SDK configuration. Add a
 request context when you want the bar to group calls by the current page request,
 previous page requests, or async requests triggered after the page loaded:
 
 ```ts
 import {
-  createOminityDebugHttpClient,
-  createOminityDebugRequestContext,
-} from "@ominity/next/debug";
+  createOminityDevToolHttpClient,
+  createOminityDevToolRequestContext,
+} from "@ominity/next/dev-tool";
 
-const requestContext = createOminityDebugRequestContext({
+const requestContext = createOminityDevToolRequestContext({
   request,
   kind: "page",
   pageId: request.headers.get("x-ominity-debug-page-id") ?? undefined,
   route: "/[locale]/products/[slug]",
 });
 
-const sdkHttpClient = createOminityDebugHttpClient({
+const sdkHttpClient = createOminityDevToolHttpClient({
   source: "cms",
   requestContext,
 });
@@ -119,7 +122,7 @@ Supported debug surfaces:
 
 - `integration`: package versions, app, environment, runtime, API URL, flags
 - `health`: env/config checks, missing variables, unsafe setup warnings
-- `channel`: detected or configured channel, locales, countries, currencies
+- `channel`: API-key-detected current channel, locales, countries, currencies, domains, and commerce methods
 - `rendering`: matched route, resolved CMS path, canonical redirect, page model, component tree, permission checks
 - `cache`: cache hits/misses, resource timestamps, ISR/revalidate state
 - `auth` and `customer`: session, MFA, login activity, memberships, switching, dev-only sign-in/spoof callbacks

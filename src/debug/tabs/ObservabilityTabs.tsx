@@ -93,7 +93,7 @@ export function HealthTab(props: {
   const missing = props.health?.missingEnvironment ?? [];
 
   if (!props.health) {
-    return <EmptyState palette={props.palette}>Pass `health` to surface config checks and unsafe environment warnings.</EmptyState>;
+    return <EmptyState palette={props.palette}>No application configuration health data is available.</EmptyState>;
   }
 
   return (

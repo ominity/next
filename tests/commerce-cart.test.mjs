@@ -30,6 +30,7 @@ function createCookieStore(initialValues = {}) {
 }
 
 function createClientFixture() {
+  const calls = [];
   const state = {
     cart: null,
     items: [],
@@ -38,9 +39,11 @@ function createClientFixture() {
   };
 
   return {
+    calls,
     state,
     client: {
       async createCart() {
+        calls.push("createCart");
         const cart = {
           id: "cart_1",
           promotionCodes: [...state.promotionCodes],
@@ -50,6 +53,7 @@ function createClientFixture() {
         return cart;
       },
       async getCart({ cartId }) {
+        calls.push("getCart");
         if (!state.cart || state.cart.id !== cartId) {
           return null;
         }
@@ -61,9 +65,11 @@ function createClientFixture() {
         };
       },
       async listCartItems() {
+        calls.push("listCartItems");
         return state.items.map((entry) => ({ ...entry }));
       },
       async createCartItem({ productId, quantity }) {
+        calls.push("createCartItem");
         const item = {
           id: `item_${state.nextItemId++}`,
           productId,
@@ -73,6 +79,7 @@ function createClientFixture() {
         return { ...item };
       },
       async updateCartItem({ itemId, data }) {
+        calls.push("updateCartItem");
         const index = state.items.findIndex((entry) => entry.id === itemId);
         if (index < 0) {
           throw new Error("Item not found.");
@@ -87,11 +94,13 @@ function createClientFixture() {
         return { ...state.items[index] };
       },
       async deleteCartItem({ itemId }) {
+        calls.push("deleteCartItem");
         const startCount = state.items.length;
         state.items = state.items.filter((entry) => entry.id !== itemId);
         return state.items.length < startCount;
       },
       async updateCart({ data }) {
+        calls.push("updateCart");
         if (Array.isArray(data.promotionCodes)) {
           state.promotionCodes = data.promotionCodes.map((entry) => String(entry));
         }
@@ -177,6 +186,7 @@ test("deleteCommerceCartItemAndRefresh removes the requested item", async () => 
     quantity: 1,
   });
   const itemId = seeded.items[0].id;
+  fixture.calls.length = 0;
 
   const snapshot = await deleteCommerceCartItemAndRefresh({
     client: fixture.client,
@@ -185,4 +195,9 @@ test("deleteCommerceCartItemAndRefresh removes the requested item", async () => 
   });
 
   assert.equal(snapshot.items.length, 0);
+  assert.deepEqual(fixture.calls, [
+    "deleteCartItem",
+    "getCart",
+    "listCartItems",
+  ]);
 });
