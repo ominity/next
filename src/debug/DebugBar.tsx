@@ -376,7 +376,7 @@ export function OminityDebugBar(props: OminityDebugBarProps) {
             backdropFilter: "blur(8px)",
           }}
         >
-          <OminityDevToolLogo size={27} />
+          <OminityDevToolLogo size={27} monochrome={palette.mode === "dark"} />
           {errorCount > 0 && (
             <span>{errorCount} {errorCount === 1 ? "error" : "errors"}</span>
           )}
@@ -395,7 +395,7 @@ export function OminityDebugBar(props: OminityDebugBarProps) {
         >
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: `1px solid ${palette.border}`, padding: "9px 10px" }}>
             <div style={{ display: "flex", alignItems: "center", gap: "8px", minWidth: 0 }}>
-              <OminityDevToolLogo size={22} />
+              <OminityDevToolLogo size={22} monochrome={palette.mode === "dark"} />
               <div style={{ fontSize: "13px", fontWeight: 800, color: palette.text, whiteSpace: "nowrap" }}>{title}</div>
               {errorCount > 0 && (
                 <span style={pillStyle(palette, "danger")}>

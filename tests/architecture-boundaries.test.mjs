@@ -108,7 +108,10 @@ test("site support uses active current-channel languages as locale source of tru
             { id: "2", code: "en", name: "English", active: true },
             { id: "3", code: "fr", name: "Français", active: false },
           ],
-          countries: [],
+          countries: [
+            { code: "BE", name: "Belgium", currency: "EUR", enabled: true, default: true },
+            { code: "FR", name: "France", currency: "EUR", enabled: false },
+          ],
           currencies: [],
         };
       },
@@ -118,6 +121,10 @@ test("site support uses active current-channel languages as locale source of tru
   const locales = await support.getSupportedLocales();
   assert.deepEqual(locales.map((locale) => locale.code), ["nl-BE", "en"]);
   assert.equal(locales.find((locale) => locale.code === "nl-BE")?.default, true);
+
+  const channelContext = await support.getChannelContext();
+  assert.deepEqual(channelContext.countries, ["BE"]);
+  assert.equal(channelContext.defaultCountry, "BE");
 
   const channel = await support.getDevToolChannelInfo();
   assert.equal(channel.id, "12");

@@ -276,7 +276,11 @@ function buildChannelContext(
       readonly defaultLanguageCode?: string | undefined;
       readonly defaultCountryCode?: string | undefined;
       readonly defaultCurrencyCode?: string | undefined;
-      readonly countries?: ReadonlyArray<{ readonly code: string; readonly currency?: string | undefined }>;
+      readonly countries?: ReadonlyArray<{
+        readonly code: string;
+        readonly currency?: string | undefined;
+        readonly enabled?: boolean | undefined;
+      }>;
       readonly currencies?: ReadonlyArray<{ readonly code: string }>;
     };
   },
@@ -309,10 +313,14 @@ function buildChannelContext(
     .map((locale) => locale.country)
     .filter((country): country is string => typeof country === "string")
     .map((country) => country.toUpperCase());
-  const channelCountries = (input.channel?.countries ?? []).map((country) => country.code.toUpperCase());
-  const countries = uniqueOrdered([...localeCountries, ...channelCountries]);
+  const activeChannelCountries = (input.channel?.countries ?? [])
+    .filter((country) => country.enabled !== false);
+  const channelCountries = activeChannelCountries.map((country) => country.code.toUpperCase());
+  const countries = input.channel
+    ? uniqueOrdered(channelCountries)
+    : uniqueOrdered(localeCountries);
   const countryCurrencyMap = Object.fromEntries(
-    (input.channel?.countries ?? [])
+    activeChannelCountries
       .flatMap((country) => {
         if (typeof country.currency !== "string" || country.currency.length === 0) {
           return [];
@@ -326,9 +334,11 @@ function buildChannelContext(
       .map((currency) => currency.code.toUpperCase())
       .filter((currency) => currency.length > 0),
   );
-  const defaultCountry = input.channel?.defaultCountryCode?.toUpperCase()
-    ?? parseLocaleCode(defaultLocale).country
-    ?? countries[0];
+  const requestedDefaultCountry = input.channel?.defaultCountryCode?.toUpperCase()
+    ?? parseLocaleCode(defaultLocale).country;
+  const defaultCountry = requestedDefaultCountry && countries.includes(requestedDefaultCountry)
+    ? requestedDefaultCountry
+    : countries[0];
   const defaultCurrency = input.channel?.defaultCurrencyCode?.toUpperCase()
     ?? (typeof defaultCountry === "string" ? countryCurrencyMap[defaultCountry.toUpperCase()] : undefined)
     ?? currencies[0];

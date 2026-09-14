@@ -4,6 +4,7 @@ const OMINITY_ICON_DATA_URI = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDo
 
 export function OminityDevToolLogo(props: {
   readonly size?: number;
+  readonly monochrome?: boolean;
   readonly style?: CSSProperties;
 }) {
   const size = props.size ?? 24;
@@ -18,6 +19,7 @@ export function OminityDevToolLogo(props: {
         width: `${size}px`,
         height: `${size}px`,
         objectFit: "contain",
+        ...(props.monochrome ? { filter: "brightness(0) invert(1)" } : {}),
         ...props.style,
       }}
     />

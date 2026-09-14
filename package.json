@@ -1,6 +1,6 @@
 {
   "name": "@ominity/next",
-  "version": "1.9.2",
+  "version": "1.9.3",
   "description": "Headless Next.js integration layer for Ominity applications and storefronts.",
   "homepage": "https://github.com/ominity/next#readme",
   "bugs": {

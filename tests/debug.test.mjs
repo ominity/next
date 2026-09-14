@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import { SDK_VERSION } from "@ominity/api-typescript";
+import { renderToStaticMarkup } from "react-dom/server";
+
+import { OminityDevToolLogo } from "../dist/debug/OminityDevToolLogo.js";
 
 import {
   OMINITY_NEXT_PACKAGE_VERSION,
@@ -16,6 +19,14 @@ import {
   listOminityDebugEntries,
   listOminityDebugRequestGroups,
 } from "../dist/debug/index.js";
+
+test("Dev Tool logo supports a white monochrome dark-mode mark", () => {
+  const colored = renderToStaticMarkup(OminityDevToolLogo({ size: 24 }));
+  const monochrome = renderToStaticMarkup(OminityDevToolLogo({ size: 24, monochrome: true }));
+
+  assert.doesNotMatch(colored, /filter:/);
+  assert.match(monochrome, /filter:brightness\(0\) invert\(1\)/);
+});
 
 test("Dev Tool channel info uses the current channel as its locale source", () => {
   const channel = createOminityDevToolChannelInfo({
