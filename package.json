@@ -1,6 +1,6 @@
 {
   "name": "@ominity/next",
-  "version": "1.9.5",
+  "version": "2.0.0",
   "description": "Headless Next.js integration layer for Ominity applications and storefronts.",
   "homepage": "https://github.com/ominity/next#readme",
   "bugs": {
@@ -62,13 +62,13 @@
       "types": "./dist/server/client-ip.d.ts",
       "default": "./dist/server/client-ip.js"
     },
+    "./routes": {
+      "types": "./dist/routes/index.d.ts",
+      "default": "./dist/routes/index.js"
+    },
     "./commerce": {
       "types": "./dist/commerce/index.d.ts",
       "default": "./dist/commerce/index.js"
-    },
-    "./commerce/react": {
-      "types": "./dist/commerce/react.d.ts",
-      "default": "./dist/commerce/react.js"
     },
     "./commerce/server": {
       "types": "./dist/commerce/server/index.d.ts",
@@ -77,10 +77,6 @@
     "./auth": {
       "types": "./dist/auth/index.d.ts",
       "default": "./dist/auth/index.js"
-    },
-    "./auth/react": {
-      "types": "./dist/auth/react.d.ts",
-      "default": "./dist/auth/react.js"
     },
     "./auth/server": {
       "types": "./dist/auth/server/index.d.ts",
@@ -97,6 +93,22 @@
     "./customer-accounts/server": {
       "types": "./dist/customer-accounts/server/index.d.ts",
       "default": "./dist/customer-accounts/server/index.js"
+    },
+    "./sdk": {
+      "types": "./dist/sdk/index.d.ts",
+      "default": "./dist/sdk/index.js"
+    },
+    "./sdk/react": {
+      "types": "./dist/sdk/react.d.ts",
+      "default": "./dist/sdk/react.js"
+    },
+    "./sdk/server": {
+      "types": "./dist/sdk/server/index.d.ts",
+      "default": "./dist/sdk/server/index.js"
+    },
+    "./react": {
+      "types": "./dist/react/index.d.ts",
+      "default": "./dist/react/index.js"
     },
     "./actions": {
       "types": "./dist/actions/index.d.ts",
@@ -143,16 +155,17 @@
     "build": "node scripts/generate-package-info.mjs && pnpm clean && tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint src",
-    "test": "pnpm build && node --test tests/**/*.test.mjs",
+    "test": "pnpm build && node --import ./tests/fixtures/register-next-headers.mjs --test tests/**/*.test.mjs",
     "prepublishOnly": "pnpm test"
   },
   "devDependencies": {
     "@eslint/js": "^9.0.0",
-    "@ominity/api-typescript": "^1.4.8",
+    "@ominity/api-typescript": "^1.6.0",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "eslint": "^9.0.0",
     "globals": "^15.0.0",
+    "happy-dom": "^21.0.4",
     "next": "^16.2.3",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
@@ -161,7 +174,7 @@
     "typescript-eslint": "^8.0.0"
   },
   "peerDependencies": {
-    "@ominity/api-typescript": "^1.4.8",
+    "@ominity/api-typescript": "^1.6.0",
     "next": "^15.0.0 || ^16.0.0",
     "react": "^18.0.0 || ^19.0.0",
     "react-dom": "^18.0.0 || ^19.0.0",

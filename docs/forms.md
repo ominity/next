@@ -75,7 +75,6 @@ import {
 export const POST = createOminityFormSubmitRouteHandler({
   ominityApiKey: process.env.OMINITY_API_KEY,
   ominityBaseUrl: process.env.OMINITY_API_URL,
-  useMockData: process.env.OMINITY_USE_MOCK_DATA === "true",
   formsValidateFormId: true,
 });
 

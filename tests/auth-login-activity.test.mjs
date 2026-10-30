@@ -142,6 +142,10 @@ test("completeOminityAuthSocialLogin writes the session and records the provider
       }, { headers: { "Content-Type": "application/hal+json" } });
     }
 
+    if (url.pathname === "/api/v1/users/7/mfa-methods") {
+      return Response.json({ _embedded: { user_mfa_methods: [] }, count: 0 }, { headers: { "Content-Type": "application/hal+json" } });
+    }
+
     if (url.pathname === "/api/v1/users/7/logins") {
       events.push({ type: "login" });
       assert.deepEqual(JSON.parse(await request.text()), {
@@ -184,9 +188,10 @@ test("completeOminityAuthSocialLogin writes the session and records the provider
       cookieStore,
     });
 
-    assert.equal(result.user.id, 7);
+    assert.equal(result.state.status, "authenticated");
+    assert.equal(result.state.user.id, 7);
+    assert.equal(result.state.user.resource, "user");
     assert.equal(result.providerUser.providerId, 4);
-    assert.equal(result.session.userId, 7);
     assert.ok(cookies.get("ominity_auth_session"));
     assert.equal(cookies.get("ominity_auth_session").includes("social-user-access-token"), false);
     assert.deepEqual(calls.map(({ method, path, query }) => ({ method, path, query })), [
@@ -197,11 +202,12 @@ test("completeOminityAuthSocialLogin writes the session and records the provider
       },
       { method: "GET", path: "/api/v1/users/7/token", query: "" },
       { method: "GET", path: "/api/v1/me", query: "" },
+      { method: "GET", path: "/api/v1/users/7/mfa-methods", query: "" },
       { method: "POST", path: "/api/v1/users/7/logins", query: "" },
     ]);
     assert.equal(calls[1].authorization, "Bearer server-api-key");
     assert.equal(calls[2].authorization, "Bearer social-user-access-token");
-    assert.equal(calls[3].authorization, "Bearer social-user-access-token");
+    assert.equal(calls[4].authorization, "Bearer social-user-access-token");
     assert.deepEqual(events.map((event) => event.type), ["cookie", "login"]);
   } finally {
     globalThis.fetch = originalFetch;

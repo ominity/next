@@ -71,7 +71,6 @@ test("Dev Tool supplies package metadata and actionable configuration health", a
     environment: "development",
     runtime: "Browser",
     nextVersion: "16.2.9",
-    mockData: false,
     requiredEnvironment: [
       { name: "OMINITY_API_URL", value: "https://example.ominity.test/api" },
       { name: "OMINITY_API_KEY", value: "" },

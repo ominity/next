@@ -30,13 +30,21 @@
    - form response normalization + optional adapter-based SDK integration
    - theme + component override surfaces (shadcn-friendly)
 
-5. **Commerce/Auth utilities (`src/commerce`, `src/auth`)**
-   - commerce client wrapper around SDK operations (carts, products, offers, shipping, payment methods and issuers, orders, and payments)
-   - optional catch-all App Router commerce handler with same-origin mutation checks
-   - authenticated active-customer routes for details, addresses, groups, mandates, payments, orders, invoices, and subscriptions
-   - stable commerce model normalization for app-layer predictability
+5. **Commerce/Auth/Customer accounts (`src/commerce`, `src/auth`, `src/customer-accounts`)**
+   - server-side cart, checkout and order-payment routes on top of the SDK, with same-origin mutation checks
+   - auth routes with an encrypted HttpOnly session, MFA, password reset and social login
+   - customer account context, switching, team and invitation routes
    - SDK-backed auth client for OAuth2, MFA, recovery codes, password reset, OAuth accounts, and user customers
-   - signed auth session helpers for cookie-based server flows
+   - pricing, routing and money helpers and commerce events; no local commerce models
+
+6. **SDK gateway (`src/sdk`)**
+   - the browser SDK (`@ominity/api-typescript` without credentials) and its React query hooks
+   - the gateway route that forwards allowlisted SDK calls with the signed-in user's token
+
+7. **Browser hooks and routes (`src/react`, `src/routes`)**
+   - `OminityProvider` and the hooks (`useAuth`, `useUser`, `useCustomer`, `useCart`, `useCheckout`, `useOrders`, …),
+     all returning SDK models
+   - `createOminityRouteHandlers`, one App Router catch-all for every package route
 
 ## Design principles
 

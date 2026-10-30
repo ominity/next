@@ -7,7 +7,10 @@ Production-ready Next.js App Router integration layer for Ominity CMS.
 - **CMS integration**: routing and rendering around the models owned by `@ominity/api-typescript`
 - **Rendering engine**: generic, recursive CMS component rendering with a project-owned component registry
 - **Next helpers**: route resolution, static params, metadata, sitemap, and draft mode utilities
-- **Commerce/Auth/Customer account utilities**: API-first commerce, OAuth2/auth, account switching, team, role, permission, and invitation helpers
+- **Browser hooks**: one `OminityProvider` and hooks for sign-in, the user's settings, customer accounts, cart,
+  checkout, wishlist, orders, invoices, subscriptions and addresses, all returning `@ominity/api-typescript` models
+- **Server routes**: one App Router catch-all for auth, commerce, customer accounts, the browser SDK gateway, tracking,
+  forms, draft mode and the Dev Tool
 - **Actions**: validated server handlers plus headless request, resource, query, and mutation helpers
 
 This package does **not** include project UI components. Each consuming website owns its own React components and visual design.
@@ -27,7 +30,7 @@ CMS-driven websites often need the same foundation repeatedly:
 ## Install
 
 ```bash
-pnpm add @ominity/next @ominity/api-typescript@^1.4.5
+pnpm add @ominity/next @ominity/api-typescript@^1.6.0
 ```
 
 If you use forms rendering, also install:
@@ -38,9 +41,12 @@ pnpm add react-hook-form
 
 Peer dependencies:
 
+- `@ominity/api-typescript` `^1.6.0`
 - `next` `^15 || ^16`
 - `react` `^18 || ^19`
 - `react-dom` `^18 || ^19`
+
+Upgrading from 1.x? See [`docs/migration-2.0.md`](docs/migration-2.0.md).
 
 ## Quick start
 
@@ -53,7 +59,6 @@ export const siteSupport = createOminitySiteSupport({
   getConfig: () => ({
     apiUrl: process.env.OMINITY_API_URL,
     apiKey: process.env.OMINITY_API_KEY,
-    useMockData: false,
     debugLogs: process.env.NODE_ENV !== "production",
     localeSegmentStrategy: "language",
     canonicalRedirectPolicy: "if-not-canonical",
@@ -136,109 +141,170 @@ This package does not force one rendering mode.
 
 Client Components can be nested inside rendered CMS pages without making the whole route client-rendered.
 
-## Auth
+## One route file for every server route
 
-`@ominity/next/auth` provides a server-first auth layer on top of `@ominity/api-typescript@^1.4.5`:
-
-- OAuth2 token issuance (`password`, `refresh_token`, and other supported grants)
-- user access token issuance (`users/{id}/token`)
-- MFA method flows (list/get/enable/disable/send/validate)
-- recovery code flows (list/regenerate/validate)
-- user OAuth account and customer lookups
-- password reset link + password reset helpers
-- signed auth session cookies (`sealAuthSession` / `unsealAuthSession`)
-
-Example:
+`@ominity/next/routes` mounts every browser-facing package route from a single App Router catch-all, configured
+once, the way the Laravel package registers its routes:
 
 ```ts
-import { createAuthClient } from "@ominity/next/auth";
+// app/api/[...ominity]/route.ts
+import { createOminityRouteHandlers } from "@ominity/next/routes";
 
-const auth = createAuthClient({
-  sdk: {
-    serverURL: process.env.OMINITY_API_URL ?? "",
-    security: {
-      apiKey: process.env.OMINITY_API_KEY ?? "",
-    },
-  },
-});
-
-const token = await auth.issuePasswordToken({
-  username: "john@example.com",
-  password: "secret",
-  clientId: process.env.OMINITY_OAUTH_CLIENT_ID ?? "",
-  clientSecret: process.env.OMINITY_OAUTH_CLIENT_SECRET ?? "",
-});
-```
-
-App Router handlers are available from `@ominity/next/auth/server`. When they
-manage OAuth with the encrypted HttpOnly session cookie, their JSON responses
-contain only the public user/session projection and never the access token,
-refresh token, client secret, or super-admin API key.
-
-Client applications can reuse `OminityAuthProvider` and `useOminityAuth` from
-`@ominity/next/auth/react`; endpoint paths and address storage remain
-configurable.
-
-Successful password, registration, and linked social-provider sign-ins are
-recorded automatically by the shared auth route handlers.
-`createOminityAuthSocialRouteHandlers` handles provider discovery, OAuth start,
-one-time callback exchange, encrypted session creation, and redirects from one
-optional catch-all route. `createOminityAuthLoginActivityRouteHandlers` and
-`useOminityLoginActivity` provide session-bound listing, detail lookup,
-pagination, loading, and error state while applications retain full control over
-rendering.
-
-## Customer accounts and teams
-
-`@ominity/next/customer-accounts` uses the SDK 1.4 customer membership,
-invitation, role, and permission models directly. A single optional catch-all
-App Router endpoint handles account context and switching, team members,
-invitations, assignable roles, and the customer permission catalogue:
-
-```ts
-// app/api/customer-accounts/[[...path]]/route.ts
-import { createOminityCustomerAccountsRouteHandlers } from "@ominity/next/customer-accounts/server";
-
-const handlers = createOminityCustomerAccountsRouteHandlers({
+export const { GET, POST, PATCH, PUT, DELETE } = createOminityRouteHandlers({
   ominityBaseUrl: process.env.OMINITY_API_URL,
+  ominityApiKey: process.env.OMINITY_API_KEY,
   authClientId: process.env.OMINITY_AUTH_CLIENT_ID,
   authClientSecret: process.env.OMINITY_AUTH_CLIENT_SECRET,
   authSessionSecret: process.env.OMINITY_AUTH_SESSION_SECRET,
   siteUrl: process.env.NEXT_PUBLIC_SITE_URL,
   nodeEnv: process.env.NODE_ENV,
+  draftToken: process.env.OMINITY_DRAFT_TOKEN,
+  auth: { socialLoginSuccessPath: "/account", socialLoginFailurePath: "/login", socialLoginMfaPath: "/mfa" },
+  commerce: { guestCheckout: true, paymentMethodsLimit: 100 },
+  devTool: process.env.NODE_ENV !== "production",
 });
-
-export const { GET, POST, PATCH, DELETE } = handlers;
 ```
 
-Wrap branded client UI with the auth and customer account providers:
+| Path | Feature | Options |
+| --- | --- | --- |
+| `/api/auth/*` | sign-in, registration, MFA, password reset, session, login activity, social login | `auth: { socialLoginSuccessPath, socialLoginFailurePath, socialLoginMfaPath }` |
+| `/api/commerce/*` | cart, checkout, shipping and payment methods, order payments | `commerce: { guestCheckout, checkoutFields, paymentMethodsLimit, resolveCountry, cartCookieName, cartCookieMaxAgeSeconds }` |
+| `/api/customer-accounts/*` | account context, switching, team and invitations | `customerAccounts`, plus `activeCustomerCookieName`, `invitationAcceptPath`, `resolveInvitationAcceptUrl` |
+| `/api/ominity/*` | the browser SDK gateway | `sdkGateway: { rules, denyRules, maxBodyBytes, membershipCacheSeconds }` |
+| `/api/events` | visitor tracking | `tracking: { enabled, debug, enrichEvent, … }` |
+| `/api/forms/submit` | CMS form submissions | `forms: { recaptchaSecret, formsValidateFormId, … }` |
+| `/api/draft` | draft mode for CMS previews | `draftToken` |
+| `/api/dev-tool/requests` | the Ominity Dev Tool request log | `devTool: true` |
+
+Set a feature to `false` to switch it off; its paths then answer 404. `basePath` (default `/api`) moves all of them.
+The shared options are the auth route options: `ominityBaseUrl`, `ominityApiKey`, `channelId`, `authClientId`,
+`authClientSecret`, `authScope`, `authSessionSecret`, `authCookieName`, `authCookieMaxAgeSeconds`, `siteUrl`,
+`nodeEnv`, `resolveLanguage`, `loginActivityEnabled`, `onLoginActivityError` and `debugEnabled`.
+
+With `devTool` on, the SDK calls of the commerce and customer-account routes appear in the Dev Tool request log. Auth
+calls deliberately do not: their bodies hold passwords and tokens.
+
+## One provider and hooks for the browser
+
+`@ominity/next/react` is the single browser entry point. Render `OminityProvider` once:
 
 ```tsx
 "use client";
 
-import { OminityAuthProvider } from "@ominity/next/auth/react";
-import { OminityCustomerAccountsProvider } from "@ominity/next/customer-accounts/react";
+import { OminityProvider } from "@ominity/next/react";
 
 export function Providers({ children }: { children: React.ReactNode }) {
   return (
-    <OminityAuthProvider>
-      <OminityCustomerAccountsProvider>{children}</OminityCustomerAccountsProvider>
-    </OminityAuthProvider>
+    <OminityProvider tracking={{ enabled: true }} customerAccounts={{ teamPageSize: 100 }}>
+      {children}
+    </OminityProvider>
   );
 }
 ```
 
-`useOminityCustomerAccounts()` provides the account list, active account,
-switching, permission checks, members, invitations, assignable roles, partial
-loading errors, and all team mutations. Its typed client also covers active
-customer details, addresses, groups, mandates, payments, orders, invoices and
-PDFs, subscription cancellation, and transition products. `useOminityCustomerQuery`
-reloads these resources on an account switch without exposing stale data.
-Invitation registration continues through the normal auth registration route;
-the package only inspects and accepts an invitation after the authenticated
-user's email matches. See
-[`docs/customer-accounts.md`](docs/customer-accounts.md) for the complete route
-surface and headless rendering examples.
+It composes the browser SDK, auth state, customer accounts, cart, wishlist and, when enabled, tracking and the Dev
+Tool provider. Its props: `sdk` (browser SDK options), `authBasePath`, `commerceBasePath`, `customerAccounts`,
+`wishlistStorageKey`, `tracking` and `devTool`.
+
+Every value the hooks return and every request they make uses the `@ominity/api-typescript` SDK's own types (`User`,
+`Cart`, `CartItem`, `Product`, `Order`, `Invoice`, `Subscription`, `SubscriptionChange`, …); the package defines no
+wrapper models. Anything without a dedicated hook is done with the SDK itself through `useOminitySdk` and the query
+hooks, via the `/api/ominity` gateway. API keys never reach the browser.
+
+| Hook | |
+| --- | --- |
+| `useAuth` | Sign-in, registration, MFA challenge, password reset, social sign-in ([`docs/auth.md`](docs/auth.md)) |
+| `useUser`, `useLoginActivity` | The user's profile, MFA methods, recovery codes and sign-in history |
+| `useCustomer`, `usePermission`, `<Can>` | The active customer account and permission checks ([`docs/customer-accounts.md`](docs/customer-accounts.md)) |
+| `useCart`, `useWishlist`, `useCheckout` | Cart, promotion codes, wishlist, checkout and payment ([`docs/commerce.md`](docs/commerce.md)) |
+| `useOrders`, `useInvoices`, `useSubscriptions`, `useSubscription`, `useAddresses` | The active account's resources |
+| `useOminitySdk`, `useOminitySdkQuery`, `useOminityCustomerSdkQuery`, … | The SDK itself ([`docs/sdk.md`](docs/sdk.md)) |
+
+```tsx
+"use client";
+
+import { useAuth, useCart } from "@ominity/next/react";
+
+export function HeaderStatus() {
+  const auth = useAuth();
+  const cart = useCart();
+
+  return (
+    <p>
+      {auth.user ? `Hi ${auth.user.firstName}` : "Not signed in"} · {cart.count} in cart
+    </p>
+  );
+}
+```
+
+## Auth
+
+Sign-in runs on the server: the auth routes keep OAuth tokens in an encrypted HttpOnly session cookie and return
+only `OminityAuthState` (`anonymous`, `mfa_required` with the methods, or `authenticated` with the SDK `User`). A
+password or social sign-in of a user with MFA stays pending, and unusable on every server route, until
+`verifyMfa` or `verifyRecoveryCode` completes it.
+
+```tsx
+const auth = useAuth();
+const state = await auth.signIn({ email, password });
+if (state.status === "mfa_required") await auth.verifyMfa("totp", code);
+```
+
+For custom server flows, `@ominity/next/auth` keeps `createAuthClient` (OAuth2 grants, MFA, recovery codes, login
+activity, password reset), the signed-session helpers and `createOminityUserAccessSdk`; `@ominity/next/auth/server`
+exports each auth route factory separately. See [`docs/auth.md`](docs/auth.md).
+
+## Customer accounts and teams
+
+A signed-in user belongs to one or more customer accounts (SDK `CustomerUser` memberships). `useCustomer` lists them
+and switches the active one, which the server validates and keeps in an HttpOnly cookie. `useOrders`, `useInvoices`,
+`useSubscriptions` (with quote-then-confirm plan changes and cancellation) and `useAddresses` read the active
+account's data through the SDK gateway with the user's own token. Team members, invitations and roles stay on
+`useOminityCustomerAccounts`. See [`docs/customer-accounts.md`](docs/customer-accounts.md).
+
+## The SDK in client components
+
+`@ominity/next/sdk` lets client components call `@ominity/api-typescript` as is, so every SDK endpoint is available
+without wrapper code in this package. The gateway at `/api/ominity` forwards the browser's SDK requests to Ominity with
+the signed-in user's access token from the encrypted session, after checking them against an allowlist (the user's
+own account and the customers they belong to by default). No credential ever reaches the browser.
+
+```tsx
+"use client";
+
+import { useOminityCustomerSdkPaginatedQuery } from "@ominity/next/react";
+
+const payments = useOminityCustomerSdkPaginatedQuery(
+  (sdk, { customerId, page, limit, signal }) =>
+    sdk.commerce.customerPayments.list({ customerId, page, limit }, { signal }),
+);
+```
+
+The query, paginated query (pages or "load more") and mutation hooks have variants for the active customer. See
+[`docs/sdk.md`](docs/sdk.md).
+
+## Commerce
+
+The cart lives on the server, in an HttpOnly cookie, and the browser can only set the shopper's fields (email,
+company, addresses, shipping method, country, currency, promotion codes). Signing in attaches the cart to the user and
+the active customer after the membership is verified. Checkout builds the order from the cart on the server; the
+browser sends only notes and the configured `checkoutFields`. Orders can only be read by the browser that placed them
+or by the signed-in customer, and mandate payments are checked against that customer. Totals, discounts, shipping and
+tax come from the SDK `Cart`; nothing is recalculated.
+
+```tsx
+const cart = useCart();
+await cart.add(product, 2);
+await cart.applyPromotionCode("WELCOME10"); // rejects with code PROMOTION_CODE_NOT_APPLIED when Ominity drops it
+
+const checkout = useCheckout();
+const order = await checkout.placeOrder({ notes });
+const payment = await checkout.pay(order.id, { paymentmethodId, redirectUrl });
+```
+
+`@ominity/next/commerce` has the pricing (`resolveCommerceProductPrice`), routing and money helpers
+(`commerceMoneyValue`, `commerceMoneyCurrency`) and the commerce events. Catalog data comes from the SDK. See
+[`docs/commerce.md`](docs/commerce.md).
 
 ## Actions and resource helpers
 
@@ -254,29 +320,6 @@ typed CRUD client. `@ominity/next/actions/react` adds headless query and mutatio
 state with cancellation and stale-response handling. See
 [`docs/actions.md`](docs/actions.md) for route, validation, permission, client,
 and React examples.
-
-## Commerce
-
-Use `createCommerceCatalog` from `@ominity/next/commerce/server` for server-only
-catalog access. It returns SDK `Product`, `ProductOffer`, and `Category` models
-without creating application wire models. App Router cart, checkout, order, and
-payment handlers live in the same server module so the API key remains outside
-the browser.
-
-Use `OminityCommerceProvider` and `useOminityCommerce` from
-`@ominity/next/commerce/react` in client UI. Cart mutations send product ID and
-quantity only. Cart count, subtotal, shipping, discounts, tax, currency, and
-total are read from the `Cart` returned by Ominity; the package does not
-recalculate them from cart items.
-
-For the default browser integration, add one optional catch-all route with
-`createOminityCommerceRouteHandlers`. It covers cart operations, cart-scoped
-shipping methods, payment methods and issuers, checkout, orders, order payments,
-and payment reads. Commerce mutations use same-origin checks, and payment
-creation forwards `Idempotency-Key`. `createCommerceClient` also exposes the SDK
-1.4.5 product, offer, shipping-class, issuer, order-payment, and payment
-operations under their original SDK model names. See
-[`docs/commerce.md`](docs/commerce.md) for the route table and headless examples.
 
 ## SEO and sitemaps
 
@@ -487,17 +530,20 @@ import { createOminityFormSubmitRouteHandler } from "@ominity/next/forms";
 export const POST = createOminityFormSubmitRouteHandler({
   ominityApiKey: process.env.OMINITY_API_KEY,
   ominityBaseUrl: process.env.OMINITY_API_URL,
-  useMockData: process.env.OMINITY_USE_MOCK_DATA === "true",
 });
 ```
 
 ## Visitor tracking
 
-Use a first-party Next route plus `TrackingProvider` so carts, orders, and browser tracking share one UUID `visitorId`.
+`OminityProvider` tracks visitors through the `/api/events` route of `createOminityRouteHandlers` when
+`tracking={{ enabled: true }}`, and adds the signed-in user to every event. The proxy forwards events with the API key
+on the server, so browser tracking and server-side SDK calls can share one UUID `visitorId`.
 
-Create a same-origin proxy route. A short neutral path such as `/api/omt` is less likely to be filtered than direct third-party analytics requests:
+To use a different path, or tracking without `OminityProvider`, mount the proxy and the provider yourself. A short
+neutral path such as `/api/omt` is less likely to be filtered than direct third-party analytics requests:
 
 ```ts
+// app/api/omt/route.ts
 import { createOminityTrackingProxyRouteHandlers } from "@ominity/next/tracking/proxy";
 
 export const { GET, POST } = createOminityTrackingProxyRouteHandlers({
@@ -508,33 +554,23 @@ export const { GET, POST } = createOminityTrackingProxyRouteHandlers({
 });
 ```
 
-Wrap your app with the client provider:
+```tsx
+<OminityProvider tracking={{ enabled: true, endpoint: "/api/omt" }}>{children}</OminityProvider>
+
+// or, on its own:
+import { TrackingProvider } from "@ominity/next/tracking/provider";
+
+<TrackingProvider endpoint="/api/omt">{children}</TrackingProvider>
+```
+
+A route handler or server action can read (or set) the same visitor id and pass it to the SDK:
 
 ```ts
 import { Ominity } from "@ominity/api-typescript";
-import { createCommerceClient } from "@ominity/next/commerce";
 import { ensureVisitorIdCookie } from "@ominity/next/tracking";
-import { TrackingProvider } from "@ominity/next/tracking/provider";
+import { cookies } from "next/headers";
 
-const visitorId = ensureVisitorIdCookie(cookies());
-
-export function Providers({ children }: { children: React.ReactNode }) {
-  return (
-    <TrackingProvider endpoint="/api/omt">
-      {children}
-    </TrackingProvider>
-  );
-}
-
-const commerce = createCommerceClient({
-  sdk: {
-    serverURL: process.env.OMINITY_API_URL ?? "",
-    security: { apiKey: process.env.OMINITY_API_KEY ?? "" },
-  },
-  visitorIdResolver: () => visitorId,
-});
-
-await commerce.createCart({ data: { currency: "EUR" } }); // visitorId is auto-injected
+const visitorId = ensureVisitorIdCookie(await cookies());
 
 const sdk = new Ominity({
   serverURL: process.env.OMINITY_API_URL ?? "",
@@ -606,53 +642,34 @@ integration state, config health, the active channel, route/rendering,
 cache/revalidation, auth/customer context, commerce, forms, tracking, searchable
 API requests, and export/copy tooling.
 
+Turn it on in the route (`devTool: true` serves `/api/dev-tool/requests`) and in `OminityProvider`, and render the
+bar:
+
 ```tsx
 "use client";
 
-import { OminityAuthProvider } from "@ominity/next/auth/react";
-import { OminityDevTool, OminityDevToolProvider } from "@ominity/next/dev-tool";
-import { OminityCommerceProvider } from "@ominity/next/commerce/react";
-import { OminityCustomerAccountsProvider } from "@ominity/next/customer-accounts/react";
-import { TrackingProvider } from "@ominity/next/tracking/provider";
+import { OminityDevTool, createOminityDevToolSnapshot } from "@ominity/next/dev-tool";
+import { OminityProvider } from "@ominity/next/react";
 
 export function Providers({ children }: { children: React.ReactNode }) {
-  const debugEnabled = process.env.NODE_ENV !== "production";
+  const enabled = process.env.NODE_ENV !== "production";
 
   return (
-    <OminityDevToolProvider
-      enabled={debugEnabled}
-      initialSnapshot={{
-        integration: {
-          appName: "Storefront",
-          environment: process.env.NODE_ENV,
-          devTool: true,
-        },
-      }}
+    <OminityProvider
+      devTool={{ enabled, snapshot: createOminityDevToolSnapshot({ appName: "Storefront", environment: process.env.NODE_ENV, enabled }) }}
     >
-      <OminityAuthProvider>
-        <OminityCustomerAccountsProvider>
-          <OminityCommerceProvider>
-            <TrackingProvider>
-              {children}
-              <OminityDevTool enabled={debugEnabled} theme="system" />
-            </TrackingProvider>
-          </OminityCommerceProvider>
-        </OminityCustomerAccountsProvider>
-      </OminityAuthProvider>
-    </OminityDevToolProvider>
+      {children}
+      <OminityDevTool enabled={enabled} theme="system" endpoint="/api/dev-tool/requests" />
+    </OminityProvider>
   );
 }
 ```
 
 The Dev Tool automatically detects its package and SDK versions, browser
-runtime, current route, and route locale. `OminityAuthProvider`,
-`OminityCustomerAccountsProvider`,
-`OminityCommerceProvider`, and `TrackingProvider` automatically register their
-Dev Tool capability when they are rendered inside `OminityDevToolProvider`. Projects
-that remove one of those modules simply do not render that provider, and the tab
-does not appear. Pass explicit props to `OminityDevTool` for app-specific
-adapters or to override auto-detected information; for example `auth={false}`
-hides the auth tab.
+runtime, current route, and route locale. The customer-account and tracking state
+inside `OminityProvider` register their Dev Tool capability automatically. Pass
+explicit props to `OminityDevTool` for app-specific adapters or to override
+auto-detected information; for example `auth={false}` hides the auth tab.
 
 On the server, pass `await siteSupport.getDevToolChannelInfo()` as the
 `channel` capability in the provider snapshot. It reuses the cached current
@@ -668,22 +685,28 @@ For Laravel Debugbar-style request history, pass a request context to
 ## Public modules
 
 - `@ominity/next` – full surface
+- `@ominity/next/react` – `OminityProvider` and every browser hook
+- `@ominity/next/routes` – `createOminityRouteHandlers`, the single App Router catch-all
 - `@ominity/next/cms` – client, stable CMS types, routing, locales, metadata helpers
 - `@ominity/next/cms/rendering` – registry + recursive renderer
 - `@ominity/next/next` – App Router integration helpers
 - `@ominity/next/forms` – Ominity forms renderer + submit helpers
-- `@ominity/next/commerce` – shared SDK-model helpers and commerce events
-- `@ominity/next/commerce/server` – server catalog and App Router route handlers
-- `@ominity/next/commerce/react` – reusable cart, checkout, and wishlist client state
+- `@ominity/next/commerce` – pricing, routing and money helpers, commerce events
+- `@ominity/next/commerce/server` – `createOminityCommerceRouteHandlers`
 - `@ominity/next/auth` – SDK-backed OAuth2, MFA, recovery code, password reset, and signed sessions
 - `@ominity/next/auth/server` – secure App Router auth route handlers
-- `@ominity/next/auth/react` – reusable browser auth state and workflows
 - `@ominity/next/customer-accounts` – browser client, SDK model exports, and customer permission helpers
-- `@ominity/next/dev-tool` – Ominity Dev Tool, SDK call capture, and request grouping helpers
-- `@ominity/next/debug` – backward-compatible Dev Tool import path
 - `@ominity/next/customer-accounts/server` – secure account/team App Router route handlers
 - `@ominity/next/customer-accounts/react` – account switching, team, permission, and invitation state/actions
+- `@ominity/next/sdk` – browser SDK factory and error helpers
+- `@ominity/next/sdk/react` – SDK provider, query, paginated query and mutation hooks
+- `@ominity/next/sdk/server` – the SDK gateway route handlers and default rules
+- `@ominity/next/actions`, `@ominity/next/actions/react`, `@ominity/next/actions/server` – typed actions and helpers
+- `@ominity/next/server`, `@ominity/next/server/client-ip` – server utilities
+- `@ominity/next/dev-tool` – Ominity Dev Tool, SDK call capture, and request grouping helpers
+- `@ominity/next/debug` – backward-compatible Dev Tool import path
 - `@ominity/next/seo` – sitemap, metadata-adjacent, and structured-data helpers
+- `@ominity/next/intl` – `next-intl` bridge
 - `@ominity/next/tracking` – visitor UUID cookie helpers for first-party tracking
 - `@ominity/next/tracking/provider` – auto-tracking client provider for App Router
 - `@ominity/next/tracking/proxy` – server-side first-party proxy helper
@@ -701,6 +724,8 @@ For Laravel Debugbar-style request history, pass a request context to
 - `docs/commerce.md`
 - `docs/auth.md`
 - `docs/customer-accounts.md`
+- `docs/sdk.md`
+- `docs/migration-2.0.md`
 - `docs/troubleshooting.md`
 
 ## Development

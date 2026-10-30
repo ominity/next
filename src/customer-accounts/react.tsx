@@ -12,12 +12,12 @@ import {
   type ReactNode,
 } from "react";
 
-import {
-  useOminityAuth,
-  type OminityAuthRegisterInput,
-  type OminityAuthSignInInput,
-  type OminityBrowserMfaMethod,
-} from "../auth/react.js";
+import type { UserMfaMethod } from "@ominity/api-typescript/models/identity/user-mfa-method";
+
+import { useAuth, type OminityAuthContextValue } from "../react/auth.js";
+
+type OminityAuthSignInInput = Parameters<OminityAuthContextValue["signIn"]>[0];
+type OminityAuthRegisterInput = Parameters<OminityAuthContextValue["register"]>[0];
 import {
   useOminityQuery,
   type UseOminityQueryOptions,
@@ -82,7 +82,7 @@ export type CustomerInvitationAuthenticationResult =
   | {
     readonly status: "requires-mfa";
     readonly invitation: CustomerUserInvitation;
-    readonly methods: ReadonlyArray<OminityBrowserMfaMethod>;
+    readonly methods: ReadonlyArray<UserMfaMethod>;
   }
   | {
     readonly status: "requires-sign-in";
@@ -275,7 +275,7 @@ function removeInvitationFromPage(
 }
 
 export function OminityCustomerAccountsProvider(props: OminityCustomerAccountsProviderProps) {
-  const auth = useOminityAuth();
+  const auth = useAuth();
   const client = useMemo(
     () => props.client ?? createCustomerAccountsClient(props.clientOptions),
     [props.client, props.clientOptions],
@@ -352,7 +352,7 @@ export function OminityCustomerAccountsProvider(props: OminityCustomerAccountsPr
       setReady(false);
       return;
     }
-    if (!auth.session) {
+    if (!auth.user) {
       contextRequest.current?.controller.abort();
       contextRequest.current = null;
       activeCustomerId.current = null;
@@ -368,7 +368,7 @@ export function OminityCustomerAccountsProvider(props: OminityCustomerAccountsPr
     void refreshContext()
       .catch(() => undefined)
       .finally(() => setReady(true));
-  }, [auth.ready, auth.session?.email, auth.session?.userId, clearTeam, refreshContext]);
+  }, [auth.ready, auth.user?.email, auth.user?.id, clearTeam, refreshContext]);
 
   useEffect(() => () => {
     contextRequest.current?.controller.abort();
@@ -554,7 +554,7 @@ export function OminityCustomerAccountsProvider(props: OminityCustomerAccountsPr
           ...previous,
           members: replaceMember(previous.members, member),
         }));
-        if (member.userId === auth.session?.userId) {
+        if (member.userId === auth.user?.id) {
           setAccountContext((previous) => ({
             ...previous,
             memberships: previous.memberships.map((item) => (
@@ -568,7 +568,7 @@ export function OminityCustomerAccountsProvider(props: OminityCustomerAccountsPr
       }
       return member;
     },
-  ), [auth.session?.userId, client, withMutation]);
+  ), [auth.user?.id, client, withMutation]);
 
   const removeMember = useCallback((userId: number) => withMutation(
     `member:${userId}:remove`,
@@ -580,10 +580,10 @@ export function OminityCustomerAccountsProvider(props: OminityCustomerAccountsPr
           ...previous,
           members: removeMemberFromPage(previous.members, userId),
         }));
-        if (userId === auth.session?.userId) await refreshContext();
+        if (userId === auth.user?.id) await refreshContext();
       }
     },
-  ), [auth.session?.userId, client, refreshContext, withMutation]);
+  ), [auth.user?.id, client, refreshContext, withMutation]);
 
   const revokeInvitation = useCallback((invitationId: number) => withMutation(
     `invitation:${invitationId}:revoke`,
@@ -642,10 +642,10 @@ export function OminityCustomerAccountsProvider(props: OminityCustomerAccountsPr
     const invitation = await inspectInvitation(token);
     requireMatchingInvitationEmail(invitation, input.email ?? "");
     const result = await auth.signIn(input);
-    if (result.requiresMfa) {
+    if (result.status === "mfa_required") {
       return { status: "requires-mfa", invitation, methods: result.methods };
     }
-    if (!result.session) return { status: "requires-sign-in", invitation };
+    if (result.status !== "authenticated") return { status: "requires-sign-in", invitation };
     return { status: "accepted", invitation, membership: await acceptInvitation(token) };
   }, [acceptInvitation, auth, inspectInvitation]);
 
@@ -655,8 +655,8 @@ export function OminityCustomerAccountsProvider(props: OminityCustomerAccountsPr
   ): Promise<CustomerInvitationAuthenticationResult> => {
     const invitation = await inspectInvitation(token);
     requireMatchingInvitationEmail(invitation, input.email ?? "");
-    const session = await auth.register(input);
-    if (!session) return { status: "requires-sign-in", invitation };
+    const result = await auth.register(input);
+    if (result.status !== "authenticated") return { status: "requires-sign-in", invitation };
     return { status: "accepted", invitation, membership: await acceptInvitation(token) };
   }, [acceptInvitation, auth, inspectInvitation]);
 

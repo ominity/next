@@ -1,16 +1,16 @@
-import type { OminityOptions } from "@ominity/api-typescript";
-import type { CreateOrderPaymentRequest } from "@ominity/api-typescript/models/operations";
+import { Ominity } from "@ominity/api-typescript";
+import type { Cart, CartItem, Order } from "@ominity/api-typescript/models";
 
-import { createCommerceClient } from "../client.js";
 import {
-  createCommerceCartItemAndRefresh,
-  deleteCommerceCartItemAndRefresh,
-  getOrCreateCommerceCartSnapshot,
-  setCommerceCartItemQuantityAndRefresh,
-  updateCommerceCartAndRefresh,
-  updateCommerceCartItemAndRefresh,
-} from "../../next/commerce-cart.js";
+  createOminityUserAccessSdk,
+  readOminityAuthSession,
+  type OminityAuthRouteHandlerConfig,
+  type OminityAuthRouteSession,
+} from "../../auth/server/route-handlers.js";
+import { readActiveCustomerId } from "../../customer-accounts/server/cookies.js";
 import {
+  clearCartIdCookie,
+  readCartIdCookie,
   writeCartIdCookie,
   type CartCookieOptions,
 } from "../../next/commerce.js";
@@ -21,55 +21,58 @@ import {
   jsonError,
   loadNextCookiesStore,
   type MaybePromise,
-  type OminityRequestLanguageResolver,
-  parseJsonBody,
+  type RouteCookieStore,
 } from "../../server/route-utils.js";
-import {
-  mockAddCartItem,
-  mockCreateOrderPayment,
-  mockCreateOrder,
-  mockDeleteCartItem,
-  mockGetOrder,
-  mockGetOrCreateCart,
-  mockGetPayment,
-  mockListOrderPayments,
-  mockUpdateCart,
-  mockUpdateCartItem,
-} from "./mock.js";
 
 const DEFAULT_OMINITY_BASE_URL = "https://demo.ominity.com/api";
+const DEV_SECRET = "development-only-ominity-session-secret-change-me";
+const ORDERS_COOKIE = "ominity_orders";
+const ORDERS_COOKIE_MAX_AGE = 60 * 60 * 24 * 30;
+const MAX_REMEMBERED_ORDERS = 20;
 const CART_INCLUDE = "shippingMethod";
-const CART_ITEMS_INCLUDE = "product,offer";
+const CART_ITEMS_INCLUDE = "product";
 
-export type OminityRequestCountryResolver = (
-  request: Request,
-) => MaybePromise<string | undefined | null>;
+/** Cart fields the browser may change. Owner, customer and tax fields are set by the server only. */
+const CART_FIELDS = [
+  "email",
+  "companyName",
+  "companyVat",
+  "billingAddress",
+  "shippingAddress",
+  "shippingMethodId",
+  "country",
+  "currency",
+  "promotionCodes",
+] as const;
+/** Cart fields copied onto the order at checkout. */
+const ORDER_FIELDS_FROM_CART = [
+  "email",
+  "companyName",
+  "companyVat",
+  "billingAddress",
+  "shippingAddress",
+  "shippingMethodId",
+  "promotionCodes",
+] as const;
+/** Payment fields the browser may send; `mandateId` is checked against the signed-in customer. */
+const PAYMENT_FIELDS = ["type", "paymentmethodId", "issuerId", "redirectUrl", "details", "mandateId"] as const;
 
-export interface OminityCommerceRouteHandlerConfig {
+export type OminityRequestCountryResolver = (request: Request) => MaybePromise<string | undefined>;
+
+export interface OminityCommerceRouteHandlerConfig extends OminityAuthRouteHandlerConfig {
+  /** Where the routes are mounted. Defaults to `/api/commerce`. */
   readonly basePath?: string | undefined;
-  readonly ominityBaseUrl?: string | undefined;
-  readonly ominityApiKey?: string | undefined;
-  readonly channelId?: string | undefined;
-  readonly siteUrl?: string | undefined;
   readonly cartCookieName?: string | undefined;
   readonly cartCookieMaxAgeSeconds?: number | undefined;
-  readonly nodeEnv?: string | undefined;
-  readonly useMockData?: boolean | undefined;
-  readonly debugEnabled?: boolean | undefined;
-  readonly sdkHttpClient?: OminityOptions["httpClient"] | undefined;
+  readonly activeCustomerCookieName?: string | undefined;
   readonly paymentMethodsLimit?: number | undefined;
-  readonly paymentMethodIssuersLimit?: number | undefined;
-  readonly resolveLanguage?: OminityRequestLanguageResolver | undefined;
+  /** Country of a new cart, e.g. from a geo header. */
   readonly resolveCountry?: OminityRequestCountryResolver | undefined;
+  /** When false, checkout requires a signed-in user. Defaults to true. */
+  readonly guestCheckout?: boolean | undefined;
+  /** Extra order fields the browser may send with `placeOrder`, besides `notes`. */
+  readonly checkoutFields?: ReadonlyArray<string> | undefined;
 }
-
-type CookieStore = Awaited<ReturnType<typeof loadNextCookiesStore>>;
-type ItemRouteContext = { params: Promise<{ itemId: string }> };
-type OrderRouteContext = { params: Promise<{ orderId: string }> };
-type PaymentRouteContext = { params: Promise<{ paymentId: string }> };
-type PaymentMethodIssuerRouteContext = {
-  params: Promise<{ paymentMethodId: string; issuerId?: string }>;
-};
 
 export interface OminityCommerceRouteHandlers {
   readonly GET: (request: Request) => Promise<Response>;
@@ -78,1120 +81,341 @@ export interface OminityCommerceRouteHandlers {
   readonly DELETE: (request: Request) => Promise<Response>;
 }
 
-function normalizedBasePath(value: string | undefined): string {
-  const path = (value ?? "/api/commerce").trim();
-  if (!path.startsWith("/")) {
-    throw new TypeError("Commerce basePath must start with a slash.");
-  }
-  return path.length > 1 ? path.replace(/\/+$/, "") : path;
+/** The cart and its items as the SDK returns them. */
+export interface OminityCartSnapshot {
+  readonly cart: Cart | null;
+  readonly items: ReadonlyArray<CartItem>;
 }
 
-function commerceRouteSegments(
-  request: Request,
-  basePath: string,
-): ReadonlyArray<string> | null {
-  const pathname = new URL(request.url).pathname.replace(/\/+$/, "") || "/";
-  if (pathname === basePath) return [];
-  if (!pathname.startsWith(`${basePath}/`)) return null;
+interface Shopper {
+  readonly session: OminityAuthRouteSession;
+  readonly userId: number;
+  readonly customerId: number | null;
+  readonly canPlaceOrders: boolean;
+}
+
+function pick(source: Readonly<Record<string, unknown>>, keys: ReadonlyArray<string>): Record<string, unknown> {
+  return Object.fromEntries(keys.filter((key) => key in source).map((key) => [key, source[key]]));
+}
+
+function base64url(bytes: Uint8Array): string {
+  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+async function hmac(secret: string, value: string): Promise<string> {
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  return base64url(new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(value))));
+}
+
+async function readJson(request: Request): Promise<Record<string, unknown> | null> {
   try {
-    return pathname.slice(basePath.length + 1).split("/").map(decodeURIComponent);
+    return asObjectRecord(await request.json());
   } catch {
     return null;
   }
 }
 
-function commerceRouteNotFound(): Response {
-  const response = jsonError(404, "NOT_FOUND", "Commerce route not found.");
-  response.headers.set("Cache-Control", "no-store");
-  return response;
-}
-
-function resolveBaseUrl(value: string | undefined): string {
-  return (value ?? DEFAULT_OMINITY_BASE_URL).replace(/\/$/, "");
-}
-
-function resolveCartCookieOptions(
-  config: OminityCommerceRouteHandlerConfig,
-): CartCookieOptions {
-  const cookieName = asNonEmptyString(config.cartCookieName);
-
-  return {
-    ...(cookieName ? { name: cookieName } : {}),
-    ...(typeof config.cartCookieMaxAgeSeconds === "number"
-      ? { maxAgeSeconds: config.cartCookieMaxAgeSeconds }
-      : {}),
-    path: "/",
-    httpOnly: true,
-    secure: (config.nodeEnv ?? "development") === "production",
-    sameSite: "lax",
-  };
-}
-
-function resolveSdkOptions(
-  config: OminityCommerceRouteHandlerConfig,
-  language?: string,
-): OminityOptions {
-  const apiKey = asNonEmptyString(config.ominityApiKey);
-  if (!apiKey) {
-    throw new Error("OMINITY_API_KEY is required.");
-  }
-
-  return {
-    serverURL: resolveBaseUrl(config.ominityBaseUrl),
-    security: {
-      apiKey,
-    },
-    ...(language ? { language } : {}),
-    ...(asNonEmptyString(config.channelId) ? { channelId: asNonEmptyString(config.channelId) } : {}),
-    ...(config.sdkHttpClient ? { httpClient: config.sdkHttpClient } : {}),
-  };
-}
-
-function createRouteCommerceClient(
-  config: OminityCommerceRouteHandlerConfig,
-  language?: string,
-) {
-  return createCommerceClient({
-    sdk: resolveSdkOptions(config, language),
-    ...(typeof config.debugEnabled === "boolean"
-      ? {
-        debug: {
-          enabled: config.debugEnabled,
-        },
-      }
-      : {}),
-  });
-}
-
-async function resolveCreateCartData(
-  config: OminityCommerceRouteHandlerConfig,
-  request: Request,
-): Promise<Readonly<Record<string, unknown>>> {
-  const country = asNonEmptyString(await config.resolveCountry?.(request));
-  if (!country) {
-    return {};
-  }
-
-  return {
-    country: country.toUpperCase(),
-  };
-}
-
-function writeMockCartCookie(
-  config: OminityCommerceRouteHandlerConfig,
-  cookieStore: CookieStore,
-  cartId: string,
-): void {
-  writeCartIdCookie(cookieStore, cartId, resolveCartCookieOptions(config));
-}
-
-function asString(value: unknown): string | undefined {
-  return asNonEmptyString(value);
-}
-
-function invalidMutationOrigin(
-  config: OminityCommerceRouteHandlerConfig,
-  request: Request,
-): Response | null {
-  if (request.headers.get("sec-fetch-site") === "cross-site") {
-    const response = jsonError(
-      403,
-      "INVALID_ORIGIN",
-      "This request must come from the same site.",
-    );
-    response.headers.set("Cache-Control", "no-store");
-    return response;
-  }
-
-  const origin = asNonEmptyString(request.headers.get("origin"));
-  if (!origin) return null;
-  const expectedOrigin = asNonEmptyString(config.siteUrl)
-    ? new URL(config.siteUrl as string).origin
-    : new URL(request.url).origin;
-  if (origin === expectedOrigin) return null;
-
-  const response = jsonError(
-    403,
-    "INVALID_ORIGIN",
-    "This request must come from the same site.",
-  );
-  response.headers.set("Cache-Control", "no-store");
-  return response;
-}
-
-function normalizeStringList(value: unknown): ReadonlyArray<string> | undefined {
-  if (!Array.isArray(value)) {
-    return undefined;
-  }
-
-  const entries = value.flatMap((entry) => {
-    const normalized = asNonEmptyString(entry);
-    return normalized ? [normalized] : [];
-  });
-
-  return entries.length > 0 ? entries : undefined;
-}
-
-function normalizeQuantity(value: unknown): number {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return value > 0 ? Math.floor(value) : 1;
-  }
-
-  if (typeof value === "string") {
-    const parsed = Number.parseInt(value, 10);
-    if (Number.isFinite(parsed) && parsed > 0) {
-      return parsed;
-    }
-  }
-
-  return 1;
-}
-
-function parseQuantity(value: unknown): number | null {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return Math.floor(value);
-  }
-
-  if (typeof value === "string") {
-    const parsed = Number.parseInt(value, 10);
-    if (Number.isFinite(parsed)) {
-      return parsed;
-    }
-  }
-
-  return null;
-}
-
-function positiveInteger(value: unknown): number | null {
-  const parsed = typeof value === "number"
-    ? value
-    : typeof value === "string" && /^\d+$/.test(value)
-      ? Number(value)
-      : Number.NaN;
-  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
-}
-
-function normalizeProductId(value: unknown): string | number | null {
-  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
-    return Math.floor(value);
-  }
-
-  if (typeof value !== "string") {
-    return null;
-  }
-
-  const trimmed = value.trim();
-  if (trimmed.length === 0) {
-    return null;
-  }
-
-  const parsed = Number.parseInt(trimmed, 10);
-  if (Number.isFinite(parsed) && `${parsed}` === trimmed) {
-    return parsed;
-  }
-
-  return trimmed;
-}
-
-function parseCartUpdatePayload(payload: unknown): {
-  readonly data?: Readonly<Record<string, unknown>>;
-  readonly error?: string;
-} {
-  const record = asObjectRecord(payload);
-  if (!record) {
-    return {
-      error: "Request body must be an object.",
-    };
-  }
-
-  const rawData = asObjectRecord(record.data) ?? record;
-  const data: Record<string, unknown> = { ...rawData };
-
-  if ("country" in rawData) {
-    const country = asString(rawData.country);
-    if (!country || country.length !== 2) {
-      return {
-        error: "`country` must be a valid 2-letter code.",
-      };
-    }
-
-    data.country = country.toUpperCase();
-  }
-
-  if ("promotionCodes" in rawData) {
-    if (!Array.isArray(rawData.promotionCodes)) {
-      return {
-        error: "`promotionCodes` must be an array.",
-      };
-    }
-
-    data.promotionCodes = Array.from(new Set(
-      rawData.promotionCodes.flatMap((entry) => {
-        const normalized = asNonEmptyString(entry);
-        return normalized ? [normalized] : [];
-      }),
-    ));
-  }
-
-  if (Object.keys(data).length === 0) {
-    return {
-      error: "Request body must contain cart update fields.",
-    };
-  }
-
-  return { data };
-}
-
-export function createOminityCommerceCartRouteHandlers(
-  config: OminityCommerceRouteHandlerConfig,
-): {
-  readonly GET: (request: Request) => Promise<Response>;
-  readonly PATCH: (request: Request) => Promise<Response>;
-} {
-  const getLanguage = createRequestLanguageResolver(config.resolveLanguage);
-
-  return {
-    async GET(request: Request): Promise<Response> {
-      const cookieStore = await loadNextCookiesStore();
-
-      if (config.useMockData) {
-        const snapshot = mockGetOrCreateCart(
-          cookieStore.get(resolveCartCookieOptions(config).name ?? "ominity_cart_id")?.value,
-        );
-        writeMockCartCookie(config, cookieStore, snapshot.cart.id);
-
-        return Response.json({
-          ...snapshot,
-          mode: "mock",
-        });
-      }
-
-      try {
-        const language = await getLanguage(request);
-        const snapshot = await getOrCreateCommerceCartSnapshot({
-          client: createRouteCommerceClient(config, language),
-          cookies: cookieStore,
-          cookieOptions: resolveCartCookieOptions(config),
-          createCartData: await resolveCreateCartData(config, request),
-          cartInclude: CART_INCLUDE,
-          itemsInclude: CART_ITEMS_INCLUDE,
-        });
-
-        return Response.json(snapshot);
-      } catch {
-        return jsonError(500, "CART_LOAD_FAILED", "Failed to load cart.");
-      }
-    },
-
-    async PATCH(request: Request): Promise<Response> {
-      const originError = invalidMutationOrigin(config, request);
-      if (originError) return originError;
-      const cookieStore = await loadNextCookiesStore();
-
-      let payload: unknown;
-      try {
-        payload = await parseJsonBody(request);
-      } catch {
-        return jsonError(400, "INVALID_JSON", "Request body must be valid JSON.");
-      }
-
-      const parsedUpdate = parseCartUpdatePayload(payload);
-      if (parsedUpdate.error || !parsedUpdate.data) {
-        return jsonError(
-          400,
-          "INVALID_CART_UPDATE",
-          parsedUpdate.error ?? "Invalid cart update payload.",
-        );
-      }
-
-      if (config.useMockData) {
-        const current = mockGetOrCreateCart(
-          cookieStore.get(resolveCartCookieOptions(config).name ?? "ominity_cart_id")?.value,
-        );
-        const snapshot = mockUpdateCart({
-          cartId: current.cart.id,
-          ...(typeof parsedUpdate.data.country === "string"
-            ? { country: parsedUpdate.data.country }
-            : {}),
-          ...(Array.isArray(parsedUpdate.data.promotionCodes)
-            ? { promotionCodes: parsedUpdate.data.promotionCodes as ReadonlyArray<string> }
-            : {}),
-        });
-        writeMockCartCookie(config, cookieStore, snapshot.cart.id);
-
-        return Response.json({
-          ...snapshot,
-          mode: "mock",
-        });
-      }
-
-      try {
-        const language = await getLanguage(request);
-        const refreshed = await updateCommerceCartAndRefresh({
-          client: createRouteCommerceClient(config, language),
-          cookies: cookieStore,
-          cookieOptions: resolveCartCookieOptions(config),
-          createCartData: await resolveCreateCartData(config, request),
-          cartInclude: CART_INCLUDE,
-          itemsInclude: CART_ITEMS_INCLUDE,
-          data: parsedUpdate.data,
-        });
-
-        return Response.json(refreshed);
-      } catch {
-        return jsonError(500, "CART_UPDATE_FAILED", "Failed to update cart.");
-      }
-    },
-  };
-}
-
-export function createOminityCommerceCartItemsRouteHandlers(
-  config: OminityCommerceRouteHandlerConfig,
-): {
-  readonly POST: (request: Request) => Promise<Response>;
-} {
-  const getLanguage = createRequestLanguageResolver(config.resolveLanguage);
-
-  return {
-    async POST(request: Request): Promise<Response> {
-      const originError = invalidMutationOrigin(config, request);
-      if (originError) return originError;
-      let payload: unknown;
-      try {
-        payload = await parseJsonBody(request);
-      } catch {
-        return jsonError(400, "INVALID_JSON", "Request body must be valid JSON.");
-      }
-
-      const record = asObjectRecord(payload);
-      if (!record) {
-        return jsonError(400, "INVALID_PAYLOAD", "Request body must be an object.");
-      }
-
-      const productId = normalizeProductId(record.productId);
-      const quantity = normalizeQuantity(record.quantity);
-      if (productId === null) {
-        return jsonError(400, "INVALID_PRODUCT_ID", "A non-empty productId is required.");
-      }
-
-      const cookieStore = await loadNextCookiesStore();
-
-      if (config.useMockData) {
-        const current = mockGetOrCreateCart(
-          cookieStore.get(resolveCartCookieOptions(config).name ?? "ominity_cart_id")?.value,
-        );
-        const snapshot = mockAddCartItem({
-          cartId: current.cart.id,
-          productId: String(productId),
-          quantity,
-        });
-        writeMockCartCookie(config, cookieStore, snapshot.cart.id);
-
-        return Response.json({
-          ...snapshot,
-          mode: "mock",
-        });
-      }
-
-      try {
-        const language = await getLanguage(request);
-        const refreshed = await createCommerceCartItemAndRefresh({
-          client: createRouteCommerceClient(config, language),
-          cookies: cookieStore,
-          cookieOptions: resolveCartCookieOptions(config),
-          createCartData: await resolveCreateCartData(config, request),
-          cartInclude: CART_INCLUDE,
-          itemsInclude: CART_ITEMS_INCLUDE,
-          productId: String(productId),
-          quantity,
-        });
-
-        return Response.json(refreshed);
-      } catch {
-        return jsonError(500, "CART_ITEM_CREATE_FAILED", "Failed to add item to cart.");
-      }
-    },
-  };
-}
-
-export function createOminityCommerceCartItemRouteHandlers(
-  config: OminityCommerceRouteHandlerConfig,
-): {
-  readonly PATCH: (request: Request, context: ItemRouteContext) => Promise<Response>;
-  readonly DELETE: (request: Request, context: ItemRouteContext) => Promise<Response>;
-} {
-  const getLanguage = createRequestLanguageResolver(config.resolveLanguage);
-
-  return {
-    async PATCH(request: Request, context: ItemRouteContext): Promise<Response> {
-      const originError = invalidMutationOrigin(config, request);
-      if (originError) return originError;
-      const { itemId } = await context.params;
-      if (!itemId || itemId.trim().length === 0) {
-        return jsonError(400, "INVALID_ITEM_ID", "A valid cart item id is required.");
-      }
-
-      let payload: unknown;
-      try {
-        payload = await parseJsonBody(request);
-      } catch {
-        return jsonError(400, "INVALID_JSON", "Request body must be valid JSON.");
-      }
-
-      const record = asObjectRecord(payload);
-      if (!record) {
-        return jsonError(400, "INVALID_PAYLOAD", "Request body must be an object.");
-      }
-
-      const quantity = parseQuantity(record.quantity);
-      const hasData = asObjectRecord(record.data) !== null;
-      if (quantity === null && !hasData) {
-        return jsonError(400, "INVALID_UPDATE", "Provide `quantity` or a `data` object.");
-      }
-
-      const cookieStore = await loadNextCookiesStore();
-
-      if (config.useMockData) {
-        const current = mockGetOrCreateCart(
-          cookieStore.get(resolveCartCookieOptions(config).name ?? "ominity_cart_id")?.value,
-        );
-        const snapshot = quantity === null
-          ? current
-          : mockUpdateCartItem({
-            cartId: current.cart.id,
-            itemId,
-            quantity,
-          });
-        writeMockCartCookie(config, cookieStore, snapshot.cart.id);
-
-        return Response.json({
-          ...snapshot,
-          mode: "mock",
-        });
-      }
-
-      try {
-        const language = await getLanguage(request);
-        const refreshed = quantity !== null
-          ? await setCommerceCartItemQuantityAndRefresh({
-            client: createRouteCommerceClient(config, language),
-            cookies: cookieStore,
-            cookieOptions: resolveCartCookieOptions(config),
-            createCartData: await resolveCreateCartData(config, request),
-            cartInclude: CART_INCLUDE,
-            itemsInclude: CART_ITEMS_INCLUDE,
-            itemId,
-            quantity,
-          })
-          : await updateCommerceCartItemAndRefresh({
-            client: createRouteCommerceClient(config, language),
-            cookies: cookieStore,
-            cookieOptions: resolveCartCookieOptions(config),
-            createCartData: await resolveCreateCartData(config, request),
-            cartInclude: CART_INCLUDE,
-            itemsInclude: CART_ITEMS_INCLUDE,
-            itemId,
-            data: record.data as Record<string, unknown>,
-          });
-
-        return Response.json(refreshed);
-      } catch {
-        return jsonError(500, "CART_ITEM_UPDATE_FAILED", "Failed to update cart item.");
-      }
-    },
-
-    async DELETE(request: Request, context: ItemRouteContext): Promise<Response> {
-      const originError = invalidMutationOrigin(config, request);
-      if (originError) return originError;
-      const { itemId } = await context.params;
-      if (!itemId || itemId.trim().length === 0) {
-        return jsonError(400, "INVALID_ITEM_ID", "A valid cart item id is required.");
-      }
-
-      const cookieStore = await loadNextCookiesStore();
-
-      if (config.useMockData) {
-        const current = mockGetOrCreateCart(
-          cookieStore.get(resolveCartCookieOptions(config).name ?? "ominity_cart_id")?.value,
-        );
-        const snapshot = mockDeleteCartItem({
-          cartId: current.cart.id,
-          itemId,
-        });
-        writeMockCartCookie(config, cookieStore, snapshot.cart.id);
-
-        return Response.json({
-          ...snapshot,
-          mode: "mock",
-        });
-      }
-
-      try {
-        const language = await getLanguage(request);
-        const refreshed = await deleteCommerceCartItemAndRefresh({
-          client: createRouteCommerceClient(config, language),
-          cookies: cookieStore,
-          cookieOptions: resolveCartCookieOptions(config),
-          createCartData: await resolveCreateCartData(config, request),
-          cartInclude: CART_INCLUDE,
-          itemsInclude: CART_ITEMS_INCLUDE,
-          itemId,
-        });
-
-        return Response.json(refreshed);
-      } catch {
-        return jsonError(500, "CART_ITEM_DELETE_FAILED", "Failed to delete cart item.");
-      }
-    },
-  };
-}
-
-export function createOminityCommerceCheckoutRouteHandlers(
-  config: OminityCommerceRouteHandlerConfig,
-): {
-  readonly POST: (request: Request) => Promise<Response>;
-} {
-  const getLanguage = createRequestLanguageResolver(config.resolveLanguage);
-
-  return {
-    async POST(request: Request): Promise<Response> {
-      const originError = invalidMutationOrigin(config, request);
-      if (originError) return originError;
-      let payload: unknown;
-      try {
-        payload = await parseJsonBody(request);
-      } catch {
-        return jsonError(400, "INVALID_JSON", "Request body must be valid JSON.");
-      }
-
-      const record = asObjectRecord(payload);
-      if (!record) {
-        return jsonError(400, "INVALID_PAYLOAD", "Request body must be an object.");
-      }
-
-      const cookieStore = await loadNextCookiesStore();
-
-      if (config.useMockData) {
-        const snapshot = mockGetOrCreateCart(
-          cookieStore.get(resolveCartCookieOptions(config).name ?? "ominity_cart_id")?.value,
-        );
-        const order = mockCreateOrder({
-          cartId: snapshot.cart.id,
-        });
-        writeMockCartCookie(config, cookieStore, snapshot.cart.id);
-
-        return Response.json({
-          order,
-          mode: "mock",
-        });
-      }
-
-      try {
-        const language = await getLanguage(request);
-        const client = createRouteCommerceClient(config, language);
-        const snapshot = await getOrCreateCommerceCartSnapshot({
-          client,
-          cookies: cookieStore,
-          cookieOptions: resolveCartCookieOptions(config),
-          createCartData: await resolveCreateCartData(config, request),
-          cartInclude: CART_INCLUDE,
-          itemsInclude: CART_ITEMS_INCLUDE,
-        });
-
-        const orderData: Record<string, unknown> = asObjectRecord(record.orderData)
-          ? { ...(record.orderData as Record<string, unknown>) }
-          : {};
-
-        orderData.cartId = asString(record.cartId) ?? snapshot.cart.id;
-
-        const email = asString(record.email);
-        if (email) {
-          orderData.email = email;
-        }
-
-        const notes = asString(record.notes);
-        if (notes) {
-          orderData.notes = notes;
-        }
-
-        const companyName = asString(record.companyName);
-        if (companyName) {
-          orderData.companyName = companyName;
-        }
-
-        const companyVat = asString(record.companyVat);
-        if (companyVat) {
-          orderData.companyVat = companyVat;
-        }
-
-        const shippingMethodId = asString(record.shippingMethodId);
-        if (shippingMethodId) {
-          orderData.shippingMethodId = shippingMethodId;
-        }
-
-        if (asObjectRecord(record.billingAddress)) {
-          orderData.billingAddress = record.billingAddress;
-        }
-
-        if (asObjectRecord(record.shippingAddress)) {
-          orderData.shippingAddress = record.shippingAddress;
-        }
-
-        const promotionCodes = normalizeStringList(record.promotionCodes);
-        if (promotionCodes) {
-          orderData.promotionCodes = promotionCodes;
-        }
-
-        const order = await client.createOrder({
-          data: orderData,
-        });
-        if (!order.id) {
-          return jsonError(
-            500,
-            "ORDER_CREATE_FAILED",
-            "Order created but response did not include an id.",
-          );
-        }
-
-        return Response.json({
-          order,
-        });
-      } catch {
-        return jsonError(500, "CHECKOUT_FAILED", "Failed to create order.");
-      }
-    },
-  };
-}
-
-export function createOminityCommerceShippingMethodsRouteHandlers(
-  config: OminityCommerceRouteHandlerConfig,
-): {
-  readonly GET: (request: Request) => Promise<Response>;
-} {
-  const getLanguage = createRequestLanguageResolver(config.resolveLanguage);
-
-  return {
-    async GET(request: Request): Promise<Response> {
-      if (config.useMockData) {
-        return Response.json({
-          items: [{
-            id: "standard",
-            name: "Standard Shipping",
-          }, {
-            id: "express",
-            name: "Express Shipping",
-          }],
-          mode: "mock",
-        });
-      }
-
-      try {
-        const cookieStore = await loadNextCookiesStore();
-        const language = await getLanguage(request);
-        const client = createRouteCommerceClient(config, language);
-        const snapshot = await getOrCreateCommerceCartSnapshot({
-          client,
-          cookies: cookieStore,
-          cookieOptions: resolveCartCookieOptions(config),
-          createCartData: await resolveCreateCartData(config, request),
-          cartInclude: CART_INCLUDE,
-          itemsInclude: CART_ITEMS_INCLUDE,
-        });
-        const methods = await client.listCartShippingMethods({ cartId: snapshot.cart.id });
-
-        return Response.json(methods);
-      } catch {
-        return jsonError(500, "SHIPPING_METHODS_FAILED", "Failed to load shipping methods.");
-      }
-    },
-  };
-}
-
-export function createOminityCommercePaymentMethodsRouteHandlers(
-  config: OminityCommerceRouteHandlerConfig,
-): {
-  readonly GET: (request: Request) => Promise<Response>;
-} {
-  const getLanguage = createRequestLanguageResolver(config.resolveLanguage);
-
-  return {
-    async GET(request: Request): Promise<Response> {
-      if (config.useMockData) {
-        return Response.json({
-          items: [{
-            resource: "paymentmethod",
-            id: 1,
-            label: "Card",
-            gateway: "mock",
-            method: "card",
-            icon: "",
-            isEnabled: true,
-            updatedAt: new Date().toISOString(),
-            createdAt: new Date().toISOString(),
-            links: {
-              self: {
-                href: "https://mock.ominity.local/payment-methods/1",
-                type: "application/hal+json",
-              },
-            },
-          }],
-          mode: "mock",
-        });
-      }
-
-      try {
-        const language = await getLanguage(request);
-        const methods = await createRouteCommerceClient(config, language).listPaymentMethods({
-          page: 1,
-          limit: config.paymentMethodsLimit ?? 100,
-        });
-
-        return Response.json({
-          items: methods,
-        });
-      } catch {
-        return jsonError(500, "PAYMENT_METHODS_FAILED", "Failed to load payment methods.");
-      }
-    },
-  };
-}
-
-export function createOminityCommercePaymentMethodIssuersRouteHandlers(
-  config: OminityCommerceRouteHandlerConfig,
-): {
-  readonly GET: (request: Request, context: PaymentMethodIssuerRouteContext) => Promise<Response>;
-} {
-  const getLanguage = createRequestLanguageResolver(config.resolveLanguage);
-
-  return {
-    async GET(request: Request, context: PaymentMethodIssuerRouteContext): Promise<Response> {
-      const { paymentMethodId: rawPaymentMethodId, issuerId: rawIssuerId } = await context.params;
-      const paymentMethodId = positiveInteger(rawPaymentMethodId);
-      const issuerId = typeof rawIssuerId === "undefined" ? undefined : positiveInteger(rawIssuerId);
-      if (!paymentMethodId || (typeof rawIssuerId !== "undefined" && !issuerId)) {
-        return jsonError(400, "INVALID_PAYMENT_METHOD_ISSUER_ID", "Payment method and issuer ids must be positive integers.");
-      }
-
-      if (config.useMockData) {
-        const issuer = {
-          resource: "paymentmethod_issuer",
-          id: issuerId ?? 1,
-          paymentmethodId: paymentMethodId,
-          issuer: "mock",
-          name: "Mock issuer",
-          icon: null,
-          isEnabled: true,
-          updatedAt: new Date().toISOString(),
-          createdAt: new Date().toISOString(),
-        };
-        return Response.json(typeof issuerId === "number" ? { issuer } : { items: [issuer], mode: "mock" });
-      }
-
-      try {
-        const language = await getLanguage(request);
-        const client = createRouteCommerceClient(config, language);
-        if (typeof issuerId === "number") {
-          const issuer = await client.getPaymentMethodIssuer({ methodId: paymentMethodId, id: issuerId });
-          return issuer
-            ? Response.json({ issuer })
-            : jsonError(404, "PAYMENT_METHOD_ISSUER_NOT_FOUND", "Payment method issuer was not found.");
-        }
-        const issuers = await client.listPaymentMethodIssuers({
-          methodId: paymentMethodId,
-          page: 1,
-          limit: config.paymentMethodIssuersLimit ?? 100,
-        });
-        return Response.json({ items: issuers });
-      } catch {
-        return jsonError(500, "PAYMENT_METHOD_ISSUERS_FAILED", "Failed to load payment method issuers.");
-      }
-    },
-  };
-}
-
-export function createOminityCommerceOrderRouteHandlers(
-  config: OminityCommerceRouteHandlerConfig,
-): {
-  readonly GET: (request: Request, context: OrderRouteContext) => Promise<Response>;
-} {
-  const getLanguage = createRequestLanguageResolver(config.resolveLanguage);
-
-  return {
-    async GET(request: Request, context: OrderRouteContext): Promise<Response> {
-      const { orderId } = await context.params;
-      if (!orderId || orderId.trim().length === 0) {
-        return jsonError(400, "INVALID_ORDER_ID", "A valid order id is required.");
-      }
-
-      if (config.useMockData) {
-        const order = mockGetOrder(orderId);
-        if (!order) {
-          return jsonError(404, "ORDER_NOT_FOUND", "Order was not found.");
-        }
-
-        return Response.json({
-          order,
-          mode: "mock",
-        });
-      }
-
-      try {
-        const language = await getLanguage(request);
-        const order = await createRouteCommerceClient(config, language).getOrder({
-          id: orderId,
-        });
-        if (!order) {
-          return jsonError(404, "ORDER_NOT_FOUND", "Order was not found.");
-        }
-
-        return Response.json({
-          order,
-        });
-      } catch {
-        return jsonError(404, "ORDER_NOT_FOUND", "Order was not found.");
-      }
-    },
-  };
-}
-
-export function createOminityCommerceOrderPaymentsRouteHandlers(
-  config: OminityCommerceRouteHandlerConfig,
-): {
-  readonly GET: (request: Request, context: OrderRouteContext) => Promise<Response>;
-  readonly POST: (request: Request, context: OrderRouteContext) => Promise<Response>;
-} {
-  const getLanguage = createRequestLanguageResolver(config.resolveLanguage);
-
-  return {
-    async GET(request: Request, context: OrderRouteContext): Promise<Response> {
-      const { orderId } = await context.params;
-      if (!orderId || orderId.trim().length === 0) {
-        return jsonError(400, "INVALID_ORDER_ID", "A valid order id is required.");
-      }
-
-      if (config.useMockData) {
-        return Response.json({
-          items: mockListOrderPayments(orderId),
-          mode: "mock",
-        });
-      }
-
-      try {
-        const language = await getLanguage(request);
-        const payments = await createRouteCommerceClient(config, language).listOrderPayments({
-          orderId,
-        });
-
-        return Response.json({
-          items: payments,
-        });
-      } catch {
-        return jsonError(500, "ORDER_PAYMENTS_FAILED", "Failed to load order payments.");
-      }
-    },
-
-    async POST(request: Request, context: OrderRouteContext): Promise<Response> {
-      const originError = invalidMutationOrigin(config, request);
-      if (originError) return originError;
-      const { orderId } = await context.params;
-      if (!orderId || orderId.trim().length === 0) {
-        return jsonError(400, "INVALID_ORDER_ID", "A valid order id is required.");
-      }
-      let payload: unknown;
-      try {
-        payload = await parseJsonBody(request);
-      } catch {
-        return jsonError(400, "INVALID_JSON", "Request body must be valid JSON.");
-      }
-      const record = asObjectRecord(payload);
-      const data = asObjectRecord(record?.data) ?? record;
-      if (!data) {
-        return jsonError(400, "INVALID_PAYMENT", "Request body must contain payment data.");
-      }
-
-      if (config.useMockData) {
-        const payment = mockCreateOrderPayment(orderId, data);
-        return payment
-          ? Response.json({ payment, mode: "mock" }, { status: 201 })
-          : jsonError(404, "ORDER_NOT_FOUND", "Order was not found.");
-      }
-
-      try {
-        const language = await getLanguage(request);
-        const idempotencyKey = asNonEmptyString(request.headers.get("idempotency-key"));
-        const payment = await createRouteCommerceClient(config, language).createOrderPayment({
-          orderId,
-          data: data as CreateOrderPaymentRequest["data"],
-          ...(idempotencyKey ? {
-            requestOptions: { headers: { "Idempotency-Key": idempotencyKey } },
-          } : {}),
-        });
-        return Response.json({ payment }, { status: 201 });
-      } catch {
-        return jsonError(500, "ORDER_PAYMENT_CREATE_FAILED", "Failed to create the order payment.");
-      }
-    },
-  };
-}
-
-export function createOminityCommercePaymentRouteHandlers(
-  config: OminityCommerceRouteHandlerConfig,
-): {
-  readonly GET: (request: Request, context: PaymentRouteContext) => Promise<Response>;
-} {
-  const getLanguage = createRequestLanguageResolver(config.resolveLanguage);
-
-  return {
-    async GET(request: Request, context: PaymentRouteContext): Promise<Response> {
-      const { paymentId } = await context.params;
-      if (!paymentId || paymentId.trim().length === 0) {
-        return jsonError(400, "INVALID_PAYMENT_ID", "A valid payment id is required.");
-      }
-
-      if (config.useMockData) {
-        const payment = mockGetPayment(paymentId);
-        if (!payment) {
-          return jsonError(404, "PAYMENT_NOT_FOUND", "Payment was not found.");
-        }
-
-        return Response.json({
-          payment,
-          mode: "mock",
-        });
-      }
-
-      try {
-        const language = await getLanguage(request);
-        const payment = await createRouteCommerceClient(config, language).getPayment({
-          id: paymentId,
-        });
-        if (!payment) {
-          return jsonError(404, "PAYMENT_NOT_FOUND", "Payment was not found.");
-        }
-
-        return Response.json({
-          payment,
-        });
-      } catch {
-        return jsonError(404, "PAYMENT_NOT_FOUND", "Payment was not found.");
-      }
-    },
-  };
-}
-
 /**
- * Creates one optional catch-all App Router endpoint for the complete commerce
- * browser surface. The smaller route factories remain available when a project
- * wants separate route files or a narrower public surface.
+ * The cart, checkout and order routes of the browser hooks (`useCart`, `useCheckout`). The browser can only reach
+ * the cart in its HttpOnly cookie and the orders placed in this session (or, signed in, its customer's orders), and
+ * only change the fields a shopper may change. Prices, owners and taxes always come from Ominity.
  */
-export function createOminityCommerceRouteHandlers(
-  config: OminityCommerceRouteHandlerConfig,
-): OminityCommerceRouteHandlers {
-  const basePath = normalizedBasePath(config.basePath);
-  const cart = createOminityCommerceCartRouteHandlers(config);
-  const cartItems = createOminityCommerceCartItemsRouteHandlers(config);
-  const cartItem = createOminityCommerceCartItemRouteHandlers(config);
-  const checkout = createOminityCommerceCheckoutRouteHandlers(config);
-  const shippingMethods = createOminityCommerceShippingMethodsRouteHandlers(config);
-  const paymentMethods = createOminityCommercePaymentMethodsRouteHandlers(config);
-  const paymentMethodIssuers = createOminityCommercePaymentMethodIssuersRouteHandlers(config);
-  const order = createOminityCommerceOrderRouteHandlers(config);
-  const orderPayments = createOminityCommerceOrderPaymentsRouteHandlers(config);
-  const payment = createOminityCommercePaymentRouteHandlers(config);
+/** The HTTP status of an SDK error: `status` on API error bodies, `statusCode` on every SDK HTTP error. */
+function errorStatus(error: unknown): number | undefined {
+  const { status, statusCode } = (error ?? {}) as { readonly status?: unknown; readonly statusCode?: unknown };
+  if (typeof status === "number") return status;
+  return typeof statusCode === "number" ? statusCode : undefined;
+}
 
-  const GET = async (request: Request): Promise<Response> => {
-    const segments = commerceRouteSegments(request, basePath);
-    if (!segments) return commerceRouteNotFound();
-    if (segments.length === 1 && segments[0] === "cart") return cart.GET(request);
-    if (segments.length === 1 && segments[0] === "shipping-methods") {
-      return shippingMethods.GET(request);
-    }
-    if (segments.length === 1 && segments[0] === "payment-methods") {
-      return paymentMethods.GET(request);
-    }
-    if (
-      (segments.length === 3 || segments.length === 4)
-      && segments[0] === "payment-methods"
-      && segments[2] === "issuers"
-      && segments[1]
-    ) {
-      return paymentMethodIssuers.GET(request, {
-        params: Promise.resolve({
-          paymentMethodId: segments[1],
-          ...(segments[3] ? { issuerId: segments[3] } : {}),
-        }),
-      });
-    }
-    if (segments.length === 2 && segments[0] === "orders" && segments[1]) {
-      return order.GET(request, { params: Promise.resolve({ orderId: segments[1] }) });
-    }
-    if (
-      segments.length === 3
-      && segments[0] === "orders"
-      && segments[1]
-      && segments[2] === "payments"
-    ) {
-      return orderPayments.GET(request, {
-        params: Promise.resolve({ orderId: segments[1] }),
-      });
-    }
-    if (segments.length === 2 && segments[0] === "payments" && segments[1]) {
-      return payment.GET(request, { params: Promise.resolve({ paymentId: segments[1] }) });
-    }
-    return commerceRouteNotFound();
+export function createOminityCommerceRouteHandlers(config: OminityCommerceRouteHandlerConfig): OminityCommerceRouteHandlers {
+  const basePath = (config.basePath ?? "/api/commerce").replace(/\/+$/, "");
+  const getLanguage = createRequestLanguageResolver(config.resolveLanguage);
+  const cartCookie: CartCookieOptions = {
+    ...(config.cartCookieName ? { name: config.cartCookieName } : {}),
+    ...(typeof config.cartCookieMaxAgeSeconds === "number" ? { maxAgeSeconds: config.cartCookieMaxAgeSeconds } : {}),
+    secure: (config.nodeEnv ?? "development") === "production",
   };
+  const secret = asNonEmptyString(config.authSessionSecret) ?? DEV_SECRET;
+  if (secret === DEV_SECRET && (config.nodeEnv ?? "development") === "production") {
+    throw new Error("OMINITY_AUTH_SESSION_SECRET must be configured in production.");
+  }
 
-  const POST = async (request: Request): Promise<Response> => {
-    const segments = commerceRouteSegments(request, basePath);
-    if (!segments) return commerceRouteNotFound();
-    if (segments.length === 2 && segments[0] === "cart" && segments[1] === "items") {
-      return cartItems.POST(request);
-    }
-    if (segments.length === 1 && segments[0] === "checkout") return checkout.POST(request);
-    if (
-      segments.length === 3
-      && segments[0] === "orders"
-      && segments[1]
-      && segments[2] === "payments"
-    ) {
-      return orderPayments.POST(request, {
-        params: Promise.resolve({ orderId: segments[1] }),
+  async function sdk(request: Request): Promise<Ominity> {
+    const apiKey = asNonEmptyString(config.ominityApiKey);
+    if (!apiKey) throw new Error("OMINITY_API_KEY is required for the commerce routes.");
+    const language = await getLanguage(request);
+    const channelId = asNonEmptyString(config.channelId);
+    return new Ominity({
+      serverURL: (config.ominityBaseUrl ?? DEFAULT_OMINITY_BASE_URL).replace(/\/+$/, ""),
+      security: { apiKey },
+      ...(language ? { language } : {}),
+      ...(channelId ? { channelId } : {}),
+      ...(config.sdkHttpClient ? { httpClient: config.sdkHttpClient } : {}),
+    });
+  }
+
+  /** The signed-in user and the active customer they belong to, confirmed with their own token. */
+  async function shopper(request: Request, cookies: RouteCookieStore): Promise<Shopper | null> {
+    const session = await readOminityAuthSession(config, cookies);
+    if (!session || typeof session.userId !== "number") return null;
+    const activeId = readActiveCustomerId(cookies, {
+      ...(config.activeCustomerCookieName ? { name: config.activeCustomerCookieName } : {}),
+    });
+    if (!activeId) return { session, userId: session.userId, customerId: null, canPlaceOrders: true };
+
+    const language = await getLanguage(request);
+    const membership = await createOminityUserAccessSdk(config, session.accessToken, language)
+      .users.customers.get({ userId: session.userId, customerId: activeId })
+      .catch((error: unknown) => {
+        // A stale active-customer cookie (no longer a member) shops as the user alone; any other failure must not
+        // silently drop the customer from the cart or order.
+        const status = errorStatus(error);
+        if (status === 403 || status === 404) return null;
+        throw error;
+      });
+    if (!membership) return { session, userId: session.userId, customerId: null, canPlaceOrders: true };
+    return {
+      session,
+      userId: session.userId,
+      customerId: membership.customerId,
+      canPlaceOrders: membership.isOwner || membership.permissions.includes("commerce.orders.place"),
+    };
+  }
+
+  async function snapshot(client: Ominity, cartId: string): Promise<OminityCartSnapshot> {
+    const [cart, items] = await Promise.all([
+      client.commerce.carts.get(cartId, { include: CART_INCLUDE }),
+      client.commerce.cartItems.list(cartId, { cartId, include: CART_ITEMS_INCLUDE, limit: 250 }),
+    ]);
+    return { cart, items: items.items };
+  }
+
+  /** The cookie's cart, attached to the signed-in user; a new one when `create` and there is none. */
+  async function currentCart(
+    request: Request,
+    cookies: RouteCookieStore,
+    client: Ominity,
+    create: boolean,
+  ): Promise<Cart | null> {
+    const cartId = readCartIdCookie(cookies, cartCookie);
+    let cart = cartId
+      ? await client.commerce.carts.get(cartId, { include: CART_INCLUDE }).catch(() => null)
+      : null;
+    if (cart?.status === "completed") cart = null;
+    const owner = await shopper(request, cookies);
+
+    if (!cart && create) {
+      const country = asNonEmptyString(await config.resolveCountry?.(request))?.toUpperCase();
+      cart = await client.commerce.carts.create({
+        ...(country ? { country } : {}),
+        ...(owner ? { userId: owner.userId, ...(owner.customerId ? { customerId: owner.customerId } : {}) } : {}),
+      });
+      writeCartIdCookie(cookies, cart.id, cartCookie);
+    } else if (cart && owner && (cart.userId !== owner.userId || (owner.customerId && cart.customerId !== owner.customerId))) {
+      cart = await client.commerce.carts.update(cart.id, {
+        userId: owner.userId,
+        ...(owner.customerId ? { customerId: owner.customerId } : {}),
       });
     }
-    return commerceRouteNotFound();
-  };
+    return cart;
+  }
 
-  const PATCH = async (request: Request): Promise<Response> => {
-    const segments = commerceRouteSegments(request, basePath);
-    if (!segments) return commerceRouteNotFound();
-    if (segments.length === 1 && segments[0] === "cart") return cart.PATCH(request);
-    if (
-      segments.length === 3
-      && segments[0] === "cart"
-      && segments[1] === "items"
-      && segments[2]
-    ) {
-      return cartItem.PATCH(request, {
-        params: Promise.resolve({ itemId: segments[2] }),
+  async function rememberedOrders(cookies: RouteCookieStore): Promise<string[]> {
+    const [payload, signature] = (cookies.get(ORDERS_COOKIE)?.value ?? "").split(".");
+    if (!payload || !signature || signature !== await hmac(secret, payload)) return [];
+    try {
+      const ids = JSON.parse(atob(payload.replace(/-/g, "+").replace(/_/g, "/"))) as unknown;
+      return Array.isArray(ids) ? ids.map(String) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  async function rememberOrder(cookies: RouteCookieStore, orderId: string): Promise<void> {
+    const ids = [orderId, ...(await rememberedOrders(cookies)).filter((id) => id !== orderId)].slice(0, MAX_REMEMBERED_ORDERS);
+    const payload = base64url(new TextEncoder().encode(JSON.stringify(ids)));
+    cookies.set(ORDERS_COOKIE, `${payload}.${await hmac(secret, payload)}`, {
+      path: "/",
+      maxAge: ORDERS_COOKIE_MAX_AGE,
+      httpOnly: true,
+      secure: (config.nodeEnv ?? "development") === "production",
+      sameSite: "lax",
+    });
+  }
+
+  /** An order placed in this browser, or one of the signed-in user's active customer. */
+  async function accessibleOrder(request: Request, cookies: RouteCookieStore, client: Ominity, orderId: string): Promise<{ order: Order; owner: Shopper | null } | null> {
+    const remembered = (await rememberedOrders(cookies)).includes(orderId);
+    const owner = await shopper(request, cookies);
+    if (!remembered && !owner?.customerId) return null;
+    const order = await client.commerce.orders.get(orderId).catch(() => null);
+    if (!order) return null;
+    return remembered || (owner?.customerId && order.customerId === owner.customerId) ? { order, owner } : null;
+  }
+
+  function crossSite(request: Request): boolean {
+    if (request.headers.get("sec-fetch-site") === "cross-site") return true;
+    const origin = asNonEmptyString(request.headers.get("origin"));
+    if (!origin) return false;
+    const expected = asNonEmptyString(config.siteUrl) ? new URL(config.siteUrl as string).origin : new URL(request.url).origin;
+    return origin !== expected;
+  }
+
+  function segments(request: Request): string[] | null {
+    const pathname = new URL(request.url).pathname.replace(/\/+$/, "");
+    if (!pathname.startsWith(`${basePath}/`)) return null;
+    return pathname.slice(basePath.length + 1).split("/").map(decodeURIComponent);
+  }
+
+  const noStore = (body: unknown, status = 200) => Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
+  const notFound = () => jsonError(404, "NOT_FOUND", "Commerce route not found.");
+
+  async function handle(method: string, request: Request): Promise<Response> {
+    const path = segments(request);
+    if (!path) return notFound();
+    if (method !== "GET" && crossSite(request)) {
+      return jsonError(403, "INVALID_ORIGIN", "This request must come from the same site.");
+    }
+    const [resource, id, sub] = path;
+    const cookies = await loadNextCookiesStore();
+
+    try {
+      const client = await sdk(request);
+
+      if (resource === "cart" && !id) {
+        if (method === "GET") {
+          const cart = await currentCart(request, cookies, client, false);
+          return noStore(cart ? await snapshot(client, cart.id) : { cart: null, items: [] });
+        }
+        if (method === "PATCH") {
+          const body = await readJson(request);
+          if (!body) return jsonError(400, "INVALID_PAYLOAD", "Send the cart fields as a JSON object.");
+          const cart = await currentCart(request, cookies, client, true);
+          await client.commerce.carts.update((cart as Cart).id, pick(body, CART_FIELDS));
+          return noStore(await snapshot(client, (cart as Cart).id));
+        }
+        if (method === "DELETE") {
+          clearCartIdCookie(cookies, cartCookie);
+          return noStore({ cart: null, items: [] });
+        }
+      }
+
+      if (resource === "cart" && id === "items") {
+        const body = method === "GET" || method === "DELETE" ? {} : await readJson(request);
+        if (!body) return jsonError(400, "INVALID_PAYLOAD", "Send the item as a JSON object.");
+        const quantity = Number(body.quantity ?? 1);
+        if (method !== "DELETE" && (!Number.isFinite(quantity) || quantity < 0)) {
+          return jsonError(400, "INVALID_QUANTITY", "Quantity must be zero or more.");
+        }
+        const cart = await currentCart(request, cookies, client, method === "POST");
+        if (!cart) return jsonError(404, "CART_NOT_FOUND", "There is no cart yet.");
+
+        if (method === "POST" && !sub) {
+          const productId = asNonEmptyString(String(body.productId ?? ""));
+          if (!productId) return jsonError(400, "INVALID_PRODUCT", "A productId is required.");
+          await client.commerce.cartItems.create(cart.id, productId, Math.max(quantity, 1));
+          return noStore(await snapshot(client, cart.id), 201);
+        }
+        if (sub && method === "PATCH") {
+          await (quantity === 0
+            ? client.commerce.cartItems.delete(cart.id, sub)
+            : client.commerce.cartItems.update(cart.id, sub, { quantity }));
+          return noStore(await snapshot(client, cart.id));
+        }
+        if (sub && method === "DELETE") {
+          await client.commerce.cartItems.delete(cart.id, sub);
+          return noStore(await snapshot(client, cart.id));
+        }
+      }
+
+      if (resource === "shipping-methods" && method === "GET") {
+        const cart = await currentCart(request, cookies, client, false);
+        if (!cart) return noStore({ items: [] });
+        const methods = await client.commerce.carts.listShippingMethods({ cartId: cart.id });
+        return noStore({ items: methods.items });
+      }
+
+      if (resource === "payment-methods" && method === "GET") {
+        if (id && sub === "issuers" && path.length === 3) {
+          const issuers = await client.settings.paymentMethodIssuers.list({ methodId: Number(id), limit: 250 });
+          return noStore({ items: issuers.items });
+        }
+        if (!id) {
+          const methods = await client.settings.paymentMethods.list({ limit: config.paymentMethodsLimit ?? 100 });
+          return noStore({ items: methods.items });
+        }
+      }
+
+      if (resource === "checkout" && method === "POST") {
+        const body = (await readJson(request)) ?? {};
+        const owner = await shopper(request, cookies);
+        if (!owner && config.guestCheckout === false) {
+          return jsonError(401, "UNAUTHENTICATED", "Sign in to place an order.");
+        }
+        if (owner?.customerId && !owner.canPlaceOrders) {
+          return jsonError(403, "MISSING_CUSTOMER_PERMISSION", "You may not place orders for this customer.");
+        }
+        const cart = await currentCart(request, cookies, client, false);
+        if (!cart || cart.totalQuantity === 0) return jsonError(422, "CART_EMPTY", "The cart is empty.");
+
+        const extra = asObjectRecord(body.fields) ?? {};
+        const order = await client.commerce.orders.create({
+          ...pick(cart as unknown as Record<string, unknown>, ORDER_FIELDS_FROM_CART),
+          ...pick(extra, ["notes", ...(config.checkoutFields ?? [])]),
+          cartId: cart.id,
+          ...(owner ? { userId: owner.userId, ...(owner.customerId ? { customerId: owner.customerId } : {}) } : {}),
+        });
+        await rememberOrder(cookies, String(order.id));
+        clearCartIdCookie(cookies, cartCookie);
+        return noStore({ order }, 201);
+      }
+
+      if (resource === "orders" && id) {
+        const access = await accessibleOrder(request, cookies, client, id);
+        if (!access) return jsonError(404, "ORDER_NOT_FOUND", "Order was not found.");
+
+        if (!sub && method === "GET") return noStore({ order: access.order });
+        if (sub === "payments" && method === "GET") {
+          const payments = await client.commerce.orders.listPayments(id);
+          return noStore({ items: payments.items });
+        }
+        if (sub === "payments" && method === "POST") {
+          const data = pick((await readJson(request)) ?? {}, PAYMENT_FIELDS);
+          if (data.mandateId !== undefined) {
+            const customerId = access.owner?.customerId;
+            const mandate = customerId && access.owner
+              ? await createOminityUserAccessSdk(config, access.owner.session.accessToken, await getLanguage(request))
+                .commerce.customerMandates.get({ customerId, id: Number(data.mandateId) })
+                .catch(() => null)
+              : null;
+            if (!mandate || access.order.customerId !== customerId) {
+              return jsonError(403, "MANDATE_NOT_ALLOWED", "This mandate cannot pay this order.");
+            }
+          }
+          const idempotencyKey = asNonEmptyString(request.headers.get("idempotency-key"));
+          const payment = await client.commerce.orders.createPayment(
+            { orderId: id, data: data as Parameters<Ominity["commerce"]["orders"]["createPayment"]>[0]["data"] },
+            idempotencyKey ? { headers: { "Idempotency-Key": idempotencyKey } } : undefined,
+          );
+          return noStore({ payment }, 201);
+        }
+      }
+
+      return notFound();
+    } catch (error) {
+      const status = errorStatus(error) ?? 500;
+      if (status >= 500) console.error("[ominity] commerce route failed", error);
+      return jsonError(status >= 400 && status < 500 ? status : 502, "COMMERCE_REQUEST_FAILED", "The request could not be completed.", {
+        ...(typeof (error as { code?: unknown })?.code === "string" ? { reason: (error as { code: string }).code } : {}),
+        ...(typeof (error as { fields?: unknown })?.fields === "object" ? { fields: (error as { fields: unknown }).fields } : {}),
       });
     }
-    return commerceRouteNotFound();
-  };
+  }
 
-  const DELETE = async (request: Request): Promise<Response> => {
-    const segments = commerceRouteSegments(request, basePath);
-    if (
-      segments?.length === 3
-      && segments[0] === "cart"
-      && segments[1] === "items"
-      && segments[2]
-    ) {
-      return cartItem.DELETE(request, {
-        params: Promise.resolve({ itemId: segments[2] }),
-      });
-    }
-    return commerceRouteNotFound();
+  return {
+    GET: (request) => handle("GET", request),
+    POST: (request) => handle("POST", request),
+    PATCH: (request) => handle("PATCH", request),
+    DELETE: (request) => handle("DELETE", request),
   };
-
-  return { GET, POST, PATCH, DELETE };
 }

@@ -1,5 +1,6 @@
 import { Ominity, type OminityOptions } from "@ominity/api-typescript";
 import type { User } from "@ominity/api-typescript/models/identity/users/user";
+import type { UserMfaMethod } from "@ominity/api-typescript/models/identity/user-mfa-method";
 import type { SocialProvider } from "@ominity/api-typescript/models/settings/social-provider";
 import type { SocialProviderUser } from "@ominity/api-typescript/models/settings/social-provider-user";
 
@@ -52,7 +53,17 @@ export interface OminityAuthRouteSession extends AuthSession {
   readonly firstName?: string;
   readonly lastName?: string;
   readonly isMfaEnabled?: boolean;
+  /** Signed in with a password but the MFA challenge is not done yet; the session grants nothing else. */
+  readonly mfaPending?: boolean;
 }
+
+/**
+ * What the browser learns about its session. The tokens stay in the encrypted cookie; `user` is the SDK `User`.
+ */
+export type OminityAuthState =
+  | { readonly status: "anonymous" }
+  | { readonly status: "mfa_required"; readonly methods: ReadonlyArray<UserMfaMethod> }
+  | { readonly status: "authenticated"; readonly user: User; readonly expiresAt: string };
 
 /**
  * Browser-safe projection of the encrypted server session.
@@ -94,7 +105,6 @@ export interface OminityAuthRouteHandlerConfig {
   readonly authCookieName?: string | undefined;
   readonly authCookieMaxAgeSeconds?: number | undefined;
   readonly nodeEnv?: string | undefined;
-  readonly useMockData?: boolean | undefined;
   readonly debugEnabled?: boolean | undefined;
   readonly loginActivityEnabled?: boolean | undefined;
   readonly onLoginActivityError?: (
@@ -125,6 +135,8 @@ export interface OminityAuthSocialRouteHandlerConfig
   readonly socialLoginBasePath?: string | undefined;
   readonly socialLoginSuccessPath?: string | undefined;
   readonly socialLoginFailurePath?: string | undefined;
+  /** Where a social sign-in goes when the user still has to pass MFA; defaults to the success path. */
+  readonly socialLoginMfaPath?: string | undefined;
 }
 
 export interface OminityAuthSocialRouteHandlers {
@@ -133,8 +145,7 @@ export interface OminityAuthSocialRouteHandlers {
 
 export interface OminityAuthSocialLoginResult {
   readonly providerUser: SocialProviderUser;
-  readonly session: OminityAuthPublicSession;
-  readonly user: OminityAuthRouteUser;
+  readonly state: OminityAuthState;
 }
 
 export type OminityAuthSocialLoginErrorCode =
@@ -310,7 +321,7 @@ export async function recordOminityAuthLoginActivity(
     readonly language?: string;
   },
 ): Promise<OminityAuthPublicLoginActivity | null> {
-  if (config.loginActivityEnabled === false || config.useMockData) {
+  if (config.loginActivityEnabled === false) {
     return null;
   }
 
@@ -457,6 +468,24 @@ function clearRouteSession(
   clearAuthSessionCookie(cookieStore, resolveCookieOptions(config));
 }
 
+/**
+ * Reads the encrypted customer-user session without contacting Ominity.
+ * Returns null when there is no session or it has expired, like the me route.
+ */
+export async function readOminityAuthSession(
+  config: OminityAuthRouteHandlerConfig,
+  cookieStore?: RouteCookieStore,
+  options: { readonly allowPendingMfa?: boolean } = {},
+): Promise<OminityAuthRouteSession | null> {
+  const session = await readAuthSessionCookie(
+    cookieStore ?? await loadNextCookiesStore(),
+    resolveCookieOptions(config),
+  ) as OminityAuthRouteSession | null;
+
+  if (!session || isAuthSessionExpired(session)) return null;
+  return session.mfaPending && !options.allowPendingMfa ? null : session;
+}
+
 async function loadUserFromAccessToken(
   config: OminityAuthRouteHandlerConfig,
   accessToken: string,
@@ -477,6 +506,85 @@ export function createOminityUserAccessSdk(
   language?: string,
 ) {
   return new Ominity(resolveAuthSdkOptions(config, accessToken, language));
+}
+
+const MFA_CHALLENGE_METHODS = new Set(["totp", "otp", "email", "sms"]);
+
+async function loadSdkUser(config: OminityAuthRouteHandlerConfig, accessToken: string, language?: string): Promise<User> {
+  const me = await createOminityUserAccessSdk(config, accessToken, language).me.get();
+  if (me.resource !== "user") {
+    throw new Error("The access token does not belong to a user.");
+  }
+  return me;
+}
+
+/** The user's enabled sign-in challenges, without their setup secrets. */
+async function challengeMethods(
+  config: OminityAuthRouteHandlerConfig,
+  accessToken: string,
+  userId: number,
+  language?: string,
+): Promise<UserMfaMethod[]> {
+  const { items } = await createOminityUserAccessSdk(config, accessToken, language).users.mfaMethods.list({ id: userId });
+  return items
+    .filter((method) => method.isEnabled && MFA_CHALLENGE_METHODS.has(method.method.toLowerCase()))
+    .map(({ details: _details, ...method }) => method);
+}
+
+/**
+ * Writes the session of a new sign-in. A user with MFA gets a pending session until the challenge is passed; login
+ * activity is recorded once the sign-in is complete.
+ */
+async function startRouteSession(
+  config: OminityAuthRouteHandlerConfig,
+  input: {
+    readonly cookieStore: RouteCookieStore;
+    readonly token: OAuthTokenResponse;
+    readonly request: Request;
+    readonly language?: string | undefined;
+    /** The token's user when the caller loaded it already. */
+    readonly user?: User | undefined;
+  },
+): Promise<OminityAuthState> {
+  const user = input.user ?? await loadSdkUser(config, input.token.accessToken, input.language);
+  const methods = await challengeMethods(config, input.token.accessToken, user.id, input.language);
+  const session: OminityAuthRouteSession = {
+    ...createRouteAuthSession(input.token, user),
+    ...(methods.length > 0 ? { mfaPending: true } : {}),
+  };
+  await writeRouteSession(config, input.cookieStore, session);
+  if (methods.length > 0) {
+    return { status: "mfa_required", methods };
+  }
+
+  await recordOminityAuthLoginActivity(config, {
+    request: input.request,
+    session,
+    user,
+    ...(input.language ? { language: input.language } : {}),
+  });
+  return { status: "authenticated", user, expiresAt: session.expiresAt };
+}
+
+/** Ends the MFA challenge of a pending session and returns the signed-in state. */
+async function completeMfaChallenge(
+  config: OminityAuthRouteHandlerConfig,
+  context: OminityAuthenticatedUserContext,
+  request: Request,
+): Promise<OminityAuthState> {
+  const user = await loadSdkUser(config, context.session.accessToken, context.language);
+  const { mfaPending: _pending, ...rest } = context.session;
+  const session = mergeSessionWithUser(rest, user);
+  await writeRouteSession(config, context.cookieStore, session);
+  if (context.session.mfaPending) {
+    await recordOminityAuthLoginActivity(config, {
+      request,
+      session,
+      user,
+      ...(context.language ? { language: context.language } : {}),
+    });
+  }
+  return { status: "authenticated", user, expiresAt: session.expiresAt };
 }
 
 function toPublicMfaMethod(item: AuthMfaMethod): OminityAuthPublicMfaMethod {
@@ -592,13 +700,13 @@ function toPublicSocialProvider(
 function socialLoginRedirectUrl(
   config: OminityAuthSocialRouteHandlerConfig,
   request: Request,
-  kind: "success" | "failure",
+  kind: "success" | "mfa" | "failure",
   parameters: Readonly<Record<string, string>>,
 ): URL {
   const origin = siteOrigin(config, request);
-  const configuredPath = kind === "success"
-    ? config.socialLoginSuccessPath
-    : config.socialLoginFailurePath;
+  const configuredPath = kind === "failure"
+    ? config.socialLoginFailurePath
+    : (kind === "mfa" ? config.socialLoginMfaPath : undefined) ?? config.socialLoginSuccessPath;
   const path = asNonEmptyString(configuredPath) ?? (kind === "success" ? "/" : "/login");
   const url = new URL(path, `${origin}/`);
   if (url.origin !== new URL(origin).origin) {
@@ -666,12 +774,8 @@ export async function completeOminityAuthSocialLogin(
     input.language,
   ).users.issueToken({ id: userId });
   const token = normalizeOAuthTokenResponse(tokenPayload);
-  const user = await loadUserFromAccessToken(
-    config,
-    token.accessToken,
-    input.language,
-  );
-  if (!user || typeof user.id !== "number") {
+  const user = await loadSdkUser(config, token.accessToken, input.language).catch(() => null);
+  if (!user) {
     throw new OminityAuthSocialLoginError(
       "SOCIAL_LOGIN_USER_UNAVAILABLE",
       "The linked Ominity user could not be loaded.",
@@ -684,21 +788,14 @@ export async function completeOminityAuthSocialLogin(
     );
   }
 
-  const session = createRouteAuthSession(token, user);
-  const cookieStore = input.cookieStore ?? await loadNextCookiesStore();
-  await writeRouteSession(config, cookieStore, session);
-  await recordOminityAuthLoginActivity(config, {
+  const state = await startRouteSession(config, {
+    cookieStore: input.cookieStore ?? await loadNextCookiesStore(),
+    token,
     request: input.request,
-    session,
+    language: input.language,
     user,
-    ...(input.language ? { language: input.language } : {}),
   });
-
-  return {
-    providerUser,
-    session: toPublicAuthSession(session),
-    user,
-  };
+  return { providerUser, state };
 }
 
 /**
@@ -729,12 +826,6 @@ export function createOminityAuthSocialRouteHandlers(
       }
 
       if (segments.length === 0) {
-        if (config.useMockData) {
-          return Response.json({ items: [], count: 0, mode: "mock" }, {
-            headers: { "Cache-Control": "no-store" },
-          });
-        }
-
         try {
           const language = await getLanguage(request);
           const result = await createOminityApiKeySdk(
@@ -759,14 +850,6 @@ export function createOminityAuthSocialRouteHandlers(
       const providerId = positiveSocialProviderId(segments[0]);
       if (providerId === null || segments.length !== 2) {
         return jsonError(404, "NOT_FOUND", "Social login route not found.");
-      }
-
-      if (config.useMockData) {
-        return jsonError(
-          503,
-          "SOCIAL_LOGIN_UNAVAILABLE",
-          "Social login is unavailable while mock auth is enabled.",
-        );
       }
 
       if (segments[1] === "start") {
@@ -806,14 +889,15 @@ export function createOminityAuthSocialRouteHandlers(
           }
 
           const language = await getLanguage(request);
-          await completeOminityAuthSocialLogin(config, {
+          const { state } = await completeOminityAuthSocialLogin(config, {
             request,
             providerId,
             code,
             ...(language ? { language } : {}),
           });
-          return Response.redirect(socialLoginRedirectUrl(config, request, "success", {
-            socialLogin: "success",
+          const pendingMfa = state.status === "mfa_required";
+          return Response.redirect(socialLoginRedirectUrl(config, request, pendingMfa ? "mfa" : "success", {
+            socialLogin: pendingMfa ? "mfa_required" : "success",
             socialProviderId: String(providerId),
           }), 302);
         } catch (error) {
@@ -834,6 +918,7 @@ async function requireAuthenticatedUserContext(
   config: OminityAuthRouteHandlerConfig,
   getLanguage: (request: Request) => Promise<string | undefined>,
   request: Request,
+  options: { readonly allowPendingMfa?: boolean } = {},
 ): Promise<
   | {
     cookieStore: Awaited<ReturnType<typeof loadNextCookiesStore>>;
@@ -845,8 +930,11 @@ async function requireAuthenticatedUserContext(
   | Response
 > {
   const { cookieStore, session } = await readRouteSession(config);
-  if (!session) {
+  if (!session || isAuthSessionExpired(session)) {
     return jsonError(401, "UNAUTHENTICATED", "You must be authenticated.");
+  }
+  if (session.mfaPending && !options.allowPendingMfa) {
+    return jsonError(401, "MFA_REQUIRED", "Complete the two-factor challenge first.");
   }
 
   try {
@@ -1002,46 +1090,6 @@ export function createOminityAuthLoginActivityRouteHandlers(
         return jsonError(404, "NOT_FOUND", "Login activity route not found.");
       }
 
-      if (config.useMockData) {
-        const { session } = await readRouteSession(config);
-        if (!session || isAuthSessionExpired(session)) {
-          return jsonError(401, "UNAUTHENTICATED", "You must be authenticated.");
-        }
-
-        const activity: OminityAuthPublicLoginActivity = {
-          resource: "user_login",
-          id: 1,
-          userId: session.userId ?? 1,
-          ipAddress: resolveRequestClientIp(request) ?? "127.0.0.1",
-          location: null,
-          device: "Mock device",
-          browser: "Mock browser",
-          userAgent: asNonEmptyString(request.headers.get("user-agent")) ?? "Mock user agent",
-          createdAt: new Date().toISOString(),
-        };
-
-        if (segments.length === 1) {
-          const loginId = positiveLoginActivityInteger(segments[0] ?? null);
-          if (loginId === null || typeof loginId === "undefined") {
-            return jsonError(400, "INVALID_LOGIN_ID", "Login id must be a positive integer.");
-          }
-          return loginId === activity.id
-            ? noStoreLoginActivity({ item: activity })
-            : jsonError(404, "LOGIN_ACTIVITY_NOT_FOUND", "Login activity was not found.");
-        }
-
-        return noStoreLoginActivity({
-          items: [activity],
-          count: 1,
-          page: 1,
-          limit: 20,
-          totalPages: 1,
-          hasNext: false,
-          hasPrevious: false,
-          mode: "mock",
-        });
-      }
-
       const context = await requireOminityAuthenticatedUserContext(config, request);
       if (context instanceof Response) {
         return context;
@@ -1140,24 +1188,6 @@ export function createOminityAuthLoginRouteHandler(
 
     const cookieStore = await loadNextCookiesStore();
 
-    if (config.useMockData) {
-      const session: OminityAuthRouteSession = {
-        accessToken: "mock-access-token",
-        tokenType: "Bearer",
-        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-        email,
-      };
-
-      await writeRouteSession(config, cookieStore, session);
-      return Response.json({
-        session: toPublicAuthSession(session),
-        user: {
-          email,
-        },
-        mode: "mock",
-      });
-    }
-
     try {
       const language = await getLanguage(request);
       const tokenConfig = resolveTokenConfig(config);
@@ -1170,20 +1200,7 @@ export function createOminityAuthLoginRouteHandler(
         ...(typeof tokenConfig.scope === "string" ? { scope: tokenConfig.scope } : {}),
       });
 
-      const user = await loadUserFromAccessToken(config, token.accessToken, language);
-      const session = createRouteAuthSession(token, user);
-      await writeRouteSession(config, cookieStore, session);
-      await recordOminityAuthLoginActivity(config, {
-        request,
-        session,
-        user,
-        ...(language ? { language } : {}),
-      });
-
-      return Response.json({
-        session: toPublicAuthSession(session),
-        user,
-      });
+      return Response.json(await startRouteSession(config, { cookieStore, token, request, language }));
     } catch (error) {
       return jsonError(
         401,
@@ -1211,47 +1228,28 @@ export function createOminityAuthMeRouteHandler(
   config: OminityAuthRouteHandlerConfig,
 ): (request: Request) => Promise<Response> {
   const getLanguage = createRequestLanguageResolver(config.resolveLanguage);
+  const anonymous = (): Response => Response.json({ status: "anonymous" } satisfies OminityAuthState);
 
   return async (request: Request): Promise<Response> => {
     const { cookieStore, session } = await readRouteSession(config);
-    if (!session) {
-      return Response.json({
-        authenticated: false,
-      });
-    }
-
+    if (!session) return anonymous();
     if (isAuthSessionExpired(session)) {
       clearRouteSession(config, cookieStore);
-      return Response.json({
-        authenticated: false,
-      });
-    }
-
-    if (config.useMockData) {
-      return Response.json({
-        authenticated: true,
-        session: toPublicAuthSession(session),
-        user: sessionUser(session),
-        mode: "mock",
-      });
+      return anonymous();
     }
 
     try {
       const language = await getLanguage(request);
-      const user = await loadUserFromAccessToken(config, session.accessToken, language);
-      const mergedSession = mergeSessionWithUser(session, user);
-      await writeRouteSession(config, cookieStore, mergedSession);
-
-      return Response.json({
-        authenticated: true,
-        session: toPublicAuthSession(mergedSession),
-        user,
-      });
+      if (session.mfaPending) {
+        const methods = await challengeMethods(config, session.accessToken, session.userId ?? 0, language);
+        return Response.json({ status: "mfa_required", methods } satisfies OminityAuthState);
+      }
+      const user = await loadSdkUser(config, session.accessToken, language);
+      await writeRouteSession(config, cookieStore, mergeSessionWithUser(session, user));
+      return Response.json({ status: "authenticated", user, expiresAt: session.expiresAt } satisfies OminityAuthState);
     } catch {
       clearRouteSession(config, cookieStore);
-      return Response.json({
-        authenticated: false,
-      });
+      return anonymous();
     }
   };
 }
@@ -1268,19 +1266,6 @@ export function createOminityAuthRefreshRouteHandler(
       return jsonError(401, "NO_REFRESH_TOKEN", "No refresh token available.");
     }
 
-    if (config.useMockData) {
-      const refreshed: OminityAuthRouteSession = {
-        ...session,
-        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-      };
-      await writeRouteSession(config, cookieStore, refreshed);
-
-      return Response.json({
-        session: toPublicAuthSession(refreshed),
-        mode: "mock",
-      });
-    }
-
     try {
       const language = await getLanguage(request);
       const tokenConfig = resolveTokenConfig(config);
@@ -1291,14 +1276,19 @@ export function createOminityAuthRefreshRouteHandler(
         clientSecret: tokenConfig.clientSecret,
         ...(typeof tokenConfig.scope === "string" ? { scope: tokenConfig.scope } : {}),
       });
-      const user = await loadUserFromAccessToken(config, token.accessToken, language);
-      const refreshed = createRouteAuthSession(token, user);
+      const user = await loadSdkUser(config, token.accessToken, language);
+      // A refresh never completes a pending MFA challenge.
+      const refreshed: OminityAuthRouteSession = {
+        ...createRouteAuthSession(token, user),
+        ...(session.mfaPending ? { mfaPending: true } : {}),
+      };
       await writeRouteSession(config, cookieStore, refreshed);
 
-      return Response.json({
-        session: toPublicAuthSession(refreshed),
-        user,
-      });
+      if (refreshed.mfaPending) {
+        const methods = await challengeMethods(config, refreshed.accessToken, user.id, language);
+        return Response.json({ status: "mfa_required", methods } satisfies OminityAuthState);
+      }
+      return Response.json({ status: "authenticated", user, expiresAt: refreshed.expiresAt } satisfies OminityAuthState);
     } catch (error) {
       clearRouteSession(config, cookieStore);
       return jsonError(
@@ -1345,40 +1335,15 @@ export function createOminityAuthRegisterRouteHandler(
 
     const cookieStore = await loadNextCookiesStore();
 
-    if (config.useMockData) {
-      const session: OminityAuthRouteSession = {
-        accessToken: "mock-access-token",
-        tokenType: "Bearer",
-        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-        email,
-        firstName,
-        ...(lastName.length > 0 ? { lastName } : {}),
-      };
-
-      await writeRouteSession(config, cookieStore, session);
-      return Response.json({
-        user: {
-          email,
-          firstName,
-          ...(lastName.length > 0 ? { lastName } : {}),
-        },
-        session: toPublicAuthSession(session),
-        mode: "mock",
-      });
-    }
-
     try {
       const language = await getLanguage(request);
       const sdk = createOminityApiKeySdk(config, language);
-      const createdUser = normalizeUser(await sdk.users.create({
+      await sdk.users.create({
         firstName,
         ...(lastName.length > 0 ? { lastName } : {}),
         email,
         password,
-      }));
-
-      let session: OminityAuthRouteSession | null = null;
-      let authedUser: OminityAuthRouteUser | null = null;
+      });
 
       try {
         const tokenConfig = resolveTokenConfig(config);
@@ -1390,28 +1355,11 @@ export function createOminityAuthRegisterRouteHandler(
           clientSecret: tokenConfig.clientSecret,
           ...(typeof tokenConfig.scope === "string" ? { scope: tokenConfig.scope } : {}),
         });
-        authedUser = await loadUserFromAccessToken(config, token.accessToken, language);
-        session = createRouteAuthSession(token, authedUser);
-        await writeRouteSession(config, cookieStore, session);
-        await recordOminityAuthLoginActivity(config, {
-          request,
-          session,
-          user: authedUser,
-          ...(language ? { language } : {}),
-        });
+        return Response.json(await startRouteSession(config, { cookieStore, token, request, language }));
       } catch {
-        // Registration may succeed even when automatic sign-in is unavailable.
+        // The account exists; the user can still sign in when automatic sign-in is unavailable.
+        return Response.json({ status: "anonymous" } satisfies OminityAuthState);
       }
-
-      return Response.json({
-        user: createdUser ?? {
-          email,
-          firstName,
-          ...(lastName.length > 0 ? { lastName } : {}),
-        },
-        ...(authedUser ? { me: authedUser } : {}),
-        ...(session ? { session: toPublicAuthSession(session) } : {}),
-      });
     } catch (error) {
       return jsonError(
         400,
@@ -1436,13 +1384,6 @@ export function createOminityAuthPasswordForgotRouteHandler(
       payload = await parseJsonBody(request);
     } catch {
       return jsonError(400, "INVALID_JSON", "Request body must be valid JSON.");
-    }
-
-    if (config.useMockData) {
-      return Response.json({
-        ok: true,
-        mode: "mock",
-      });
     }
 
     const record = asObjectRecord(payload);
@@ -1498,13 +1439,6 @@ export function createOminityAuthPasswordResetRouteHandler(
       return jsonError(400, "INVALID_JSON", "Request body must be valid JSON.");
     }
 
-    if (config.useMockData) {
-      return Response.json({
-        ok: true,
-        mode: "mock",
-      });
-    }
-
     const record = asObjectRecord(payload);
     if (!record) {
       return jsonError(400, "INVALID_PAYLOAD", "Request body must be an object.");
@@ -1556,33 +1490,13 @@ export function createOminityAuthMfaMethodsRouteHandler(
   const getLanguage = createRequestLanguageResolver(config.resolveLanguage);
 
   return async (request: Request): Promise<Response> => {
-    if (config.useMockData) {
-      const { session } = await readRouteSession(config);
-      if (!session) {
-        return jsonError(401, "UNAUTHENTICATED", "You must be authenticated.");
-      }
-
-      return Response.json({
-        items: [{
-          method: "email",
-          isEnabled: true,
-        }],
-        mode: "mock",
-      });
-    }
-
-    const context = await requireAuthenticatedUserContext(config, getLanguage, request);
+    const context = await requireAuthenticatedUserContext(config, getLanguage, request, { allowPendingMfa: true });
     if (context instanceof Response) {
       return context;
     }
 
-    const authClient = createServerAuthClient(config, context.session.accessToken, context.language);
-    const response = await authClient.listUserMfaMethods({
-      userId: context.userId,
-    });
-
     return Response.json({
-      items: response.items.map((item) => toPublicMfaMethod(item)),
+      items: await challengeMethods(config, context.session.accessToken, context.userId, context.language),
     });
   };
 }
@@ -1606,20 +1520,7 @@ export function createOminityAuthMfaSendRouteHandler(
       return jsonError(400, "INVALID_METHOD", "A non-empty MFA method is required.");
     }
 
-    if (config.useMockData) {
-      const { session } = await readRouteSession(config);
-      if (!session) {
-        return jsonError(401, "UNAUTHENTICATED", "You must be authenticated.");
-      }
-
-      return Response.json({
-        ok: true,
-        method,
-        mode: "mock",
-      });
-    }
-
-    const context = await requireAuthenticatedUserContext(config, getLanguage, request);
+    const context = await requireAuthenticatedUserContext(config, getLanguage, request, { allowPendingMfa: true });
     if (context instanceof Response) {
       return context;
     }
@@ -1661,20 +1562,7 @@ export function createOminityAuthMfaValidateRouteHandler(
       return jsonError(400, "INVALID_MFA_INPUT", "Both method and code are required.");
     }
 
-    if (config.useMockData) {
-      const { session } = await readRouteSession(config);
-      if (!session) {
-        return jsonError(401, "UNAUTHENTICATED", "You must be authenticated.");
-      }
-
-      return Response.json({
-        ok: true,
-        method,
-        mode: "mock",
-      });
-    }
-
-    const context = await requireAuthenticatedUserContext(config, getLanguage, request);
+    const context = await requireAuthenticatedUserContext(config, getLanguage, request, { allowPendingMfa: true });
     if (context instanceof Response) {
       return context;
     }
@@ -1684,25 +1572,12 @@ export function createOminityAuthMfaValidateRouteHandler(
       userId: context.userId,
       method,
       code,
-    });
-
-    let item: AuthMfaMethod | undefined;
-    if (result.success) {
-      try {
-        item = await authClient.getUserMfaMethod({
-          userId: context.userId,
-          method,
-        });
-      } catch {
-        // MFA validation already succeeded; method refresh is best-effort.
-      }
+    }).catch(() => ({ success: false }));
+    if (result.success !== true) {
+      return jsonError(422, "INVALID_MFA_CODE", "The code is not valid.");
     }
 
-    return Response.json({
-      ok: result.success === true,
-      method,
-      ...(item ? { item: toPublicMfaMethod(item) } : {}),
-    });
+    return Response.json(await completeMfaChallenge(config, context, request));
   };
 }
 
@@ -1729,19 +1604,7 @@ export function createOminityAuthRecoveryValidateRouteHandler(
       return jsonError(400, "INVALID_CODE", "A valid recovery code is required.");
     }
 
-    if (config.useMockData) {
-      const { session } = await readRouteSession(config);
-      if (!session) {
-        return jsonError(401, "UNAUTHENTICATED", "You must be authenticated.");
-      }
-
-      return Response.json({
-        ok: true,
-        mode: "mock",
-      });
-    }
-
-    const context = await requireAuthenticatedUserContext(config, getLanguage, request);
+    const context = await requireAuthenticatedUserContext(config, getLanguage, request, { allowPendingMfa: true });
     if (context instanceof Response) {
       return context;
     }
@@ -1750,10 +1613,11 @@ export function createOminityAuthRecoveryValidateRouteHandler(
     const result = await authClient.validateUserRecoveryCode({
       userId: context.userId,
       code,
-    });
+    }).catch(() => ({ success: false }));
+    if (result.success !== true) {
+      return jsonError(422, "INVALID_RECOVERY_CODE", "The recovery code is not valid.");
+    }
 
-    return Response.json({
-      ok: result.success === true,
-    });
+    return Response.json(await completeMfaChallenge(config, context, request));
   };
 }

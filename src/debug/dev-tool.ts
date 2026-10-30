@@ -41,12 +41,11 @@ export interface CreateOminityDevToolSnapshotOptions {
   readonly basePath?: string;
   readonly route?: string;
   readonly locale?: string;
-  readonly mockData?: boolean;
   readonly debugLogs?: boolean;
   readonly enabled?: boolean;
   readonly flags?: ReadonlyArray<OminityDebugFlag>;
   readonly integrationDetails?: Readonly<Record<string, unknown>>;
-  readonly mode?: "mock" | "live" | "hybrid" | "unknown";
+  readonly mode?: "live" | "unknown";
   readonly channelId?: string;
   readonly localeSegmentStrategy?: string;
   readonly trailingSlash?: boolean;
@@ -158,8 +157,7 @@ export function createOminityDevToolSnapshot(
       ...(requirement.message ? { message: requirement.message } : {}),
     };
   });
-  const mode = options.mode
-    ?? (options.mockData === true ? "mock" : options.mockData === false ? "live" : "unknown");
+  const mode = options.mode ?? "live";
 
   return {
     integration: {
@@ -174,7 +172,6 @@ export function createOminityDevToolSnapshot(
       ...(typeof options.basePath === "string" ? { basePath: options.basePath } : {}),
       ...(options.route ? { route: options.route } : {}),
       ...(options.locale ? { locale: options.locale } : {}),
-      ...(typeof options.mockData === "boolean" ? { mockData: options.mockData } : {}),
       ...(typeof options.debugLogs === "boolean" ? { debugLogs: options.debugLogs } : {}),
       devTool: options.enabled ?? true,
       ...(options.flags ? { flags: options.flags } : {}),

@@ -55,7 +55,6 @@ export function GeneralTab(props: {
           <Field palette={props.palette} label="Locale" value={props.integration?.locale} mono />
           <Field palette={props.palette} label="API URL" value={props.integration?.apiUrl} mono />
           <Field palette={props.palette} label="Base path" value={props.integration?.basePath} mono />
-          <Field palette={props.palette} label="Mock data" value={props.integration?.mockData} />
           <Field palette={props.palette} label="Debug logs" value={props.integration?.debugLogs} />
           <Field
             palette={props.palette}

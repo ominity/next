@@ -3,16 +3,7 @@ import { test } from "node:test";
 
 import { toPublicAuthSession } from "../dist/auth/index.js";
 import { normalizeChannel, createRoutingConfig } from "../dist/cms/index.js";
-import {
-  commerceCartCount,
-  commerceCartCurrency,
-  commerceCartDiscount,
-  commerceCartItemTotalPrice,
-  commerceCartShipping,
-  commerceCartSubtotal,
-  commerceCartTax,
-  commerceCartTotal,
-} from "../dist/commerce/index.js";
+import { commerceMoneyCurrency, commerceMoneyValue } from "../dist/commerce/index.js";
 import {
   buildCmsSitemap,
   buildLocalizedResourceSitemap,
@@ -40,32 +31,10 @@ test("public auth sessions never expose OAuth credentials", () => {
   assert.equal(Object.hasOwn(session, "tokenType"), false);
 });
 
-test("cart totals and currency are read from the backend Cart model", () => {
-  const cart = {
-    subtotalAmount: { value: "108.25", currency: "usd" },
-    shippingAmount: { value: "12.00", currency: "usd" },
-    discountAmount: { value: "8.25", currency: "usd" },
-    taxAmount: { value: "21.00", currency: "usd" },
-    totalAmount: { value: "133.00", currency: "usd" },
-    totalQuantity: 7,
-    currency: "usd",
-  };
-
-  assert.equal(commerceCartSubtotal(cart), 108.25);
-  assert.equal(commerceCartShipping(cart), 12);
-  assert.equal(commerceCartDiscount(cart), 8.25);
-  assert.equal(commerceCartTax(cart), 21);
-  assert.equal(commerceCartTotal(cart), 133);
-  assert.equal(commerceCartCount(cart), 7);
-  assert.equal(commerceCartCurrency(cart), "USD");
-});
-
-test("cart item totals are never reconstructed from unit price and quantity", () => {
-  assert.equal(commerceCartItemTotalPrice({
-    id: "item-1",
-    quantity: 4,
-    unitPrice: { value: "19.99", currency: "EUR" },
-  }), 0);
+test("money helpers read SDK amounts without re-modelling them", () => {
+  assert.equal(commerceMoneyValue({ value: "108.25", currency: "usd" }), 108.25);
+  assert.equal(commerceMoneyValue(undefined), 0);
+  assert.equal(commerceMoneyCurrency({ value: "1.00", currency: "usd" }), "USD");
 });
 
 test("channel normalization accepts numeric SDK channel and language ids", () => {
@@ -82,57 +51,64 @@ test("channel normalization accepts numeric SDK channel and language ids", () =>
 });
 
 test("site support uses active current-channel languages as locale source of truth", async () => {
-  let currentChannelRequests = 0;
-  const support = createOminitySiteSupport({
-    getConfig: () => ({
-      useMockData: true,
-      localeSegmentStrategy: "language",
-      canonicalRedirectPolicy: "if-not-canonical",
-      stringLinkStrategy: "passthrough",
-      trailingSlash: false,
-      basePath: "",
-    }),
-    mockClient: {
-      async getLocales() {
-        throw new Error("Channel locale resolution must not use a separate locale source");
-      },
-      async getChannel() {
-        currentChannelRequests += 1;
-        return {
-          id: "12",
-          identifier: "web",
-          name: "Website",
-          defaultLanguageCode: "nl-BE",
-          languages: [
-            { id: "1", code: "nl", localeCode: "nl-BE", name: "Nederlands", active: true },
-            { id: "2", code: "en", name: "English", active: true },
-            { id: "3", code: "fr", name: "Français", active: false },
-          ],
-          countries: [
-            { code: "BE", name: "Belgium", currency: "EUR", enabled: true, default: true },
-            { code: "FR", name: "France", currency: "EUR", enabled: false },
-          ],
-          currencies: [],
-        };
-      },
-    },
-  });
+  const originalFetch = globalThis.fetch;
+  const requests = [];
+  globalThis.fetch = async (input, init) => {
+    const request = input instanceof Request ? input : new Request(input, init);
+    const path = new URL(request.url).pathname;
+    requests.push(path);
+    if (path !== "/api/v1/channels/current") return new Response(null, { status: 404 });
+    return Response.json({
+      resource: "channel",
+      id: 12,
+      identifier: "web",
+      name: "Website",
+      defaultLanguage: { code: "nl-BE" },
+      defaultCountry: { code: "BE" },
+      languages: [
+        { id: 1, code: "nl", name: "Nederlands", isActive: true, locale: { code: "nl-BE" } },
+        { id: 2, code: "en", name: "English", isActive: true },
+        { id: 3, code: "fr", name: "Français", isActive: false },
+      ],
+      countries: [
+        { code: "BE", name: "Belgium", currency: "EUR", isEnabled: true },
+        { code: "FR", name: "France", currency: "EUR", isEnabled: false },
+      ],
+      currencies: [],
+    }, { headers: { "Content-Type": "application/hal+json" } });
+  };
 
-  const locales = await support.getSupportedLocales();
-  assert.deepEqual(locales.map((locale) => locale.code), ["nl-BE", "en"]);
-  assert.equal(locales.find((locale) => locale.code === "nl-BE")?.default, true);
+  try {
+    const support = createOminitySiteSupport({
+      getConfig: () => ({
+        apiUrl: "https://tenant.ominity.test/api",
+        apiKey: "server-api-key",
+        localeSegmentStrategy: "language",
+        canonicalRedirectPolicy: "if-not-canonical",
+        stringLinkStrategy: "passthrough",
+        trailingSlash: false,
+        basePath: "",
+      }),
+    });
 
-  const channelContext = await support.getChannelContext();
-  assert.deepEqual(channelContext.countries, ["BE"]);
-  assert.equal(channelContext.defaultCountry, "BE");
+    const locales = await support.getSupportedLocales();
+    assert.deepEqual(locales.map((locale) => locale.code), ["nl-BE", "en"]);
+    assert.equal(locales.find((locale) => locale.code === "nl-BE")?.default, true);
 
-  const channel = await support.getDevToolChannelInfo();
-  assert.equal(channel.id, "12");
-  assert.equal(channel.name, "Website");
-  assert.equal(channel.source, "mock");
-  assert.equal(channel.defaultLocale, "nl-BE");
-  assert.deepEqual(channel.locales.map((locale) => locale.code), ["nl-BE", "en"]);
-  assert.equal(currentChannelRequests, 1);
+    const channelContext = await support.getChannelContext();
+    assert.deepEqual(channelContext.countries, ["BE"]);
+    assert.equal(channelContext.defaultCountry, "BE");
+
+    const channel = await support.getDevToolChannelInfo();
+    assert.equal(channel.id, "12");
+    assert.equal(channel.name, "Website");
+    assert.equal(channel.source, "detected");
+    assert.equal(channel.defaultLocale, "nl-BE");
+    assert.deepEqual(channel.locales.map((locale) => locale.code), ["nl-BE", "en"]);
+    assert.deepEqual(requests, ["/api/v1/channels/current"], "the channel is the only locale source, fetched once");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("CMS sitemap emits the configured channel locales and shared XML", () => {

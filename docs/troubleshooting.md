@@ -15,80 +15,47 @@ Debug logs include endpoint, query payload, and normalization milestones.
 
 ## Enable the Ominity Dev Tool
 
-Create a debug route that exposes the captured SDK calls:
+Turn on the request log route in `createOminityRouteHandlers` (it serves `/api/dev-tool/requests`), the Dev Tool
+provider in `OminityProvider`, and render the bar:
 
 ```ts
-// app/api/dev-tool/requests/route.ts
-import { createOminityDevToolRouteHandlers } from "@ominity/next/dev-tool";
-
-export const { GET, DELETE } = createOminityDevToolRouteHandlers({
-  enabled: process.env.NODE_ENV !== "production",
+// app/api/[...ominity]/route.ts
+export const { GET, POST, PATCH, PUT, DELETE } = createOminityRouteHandlers({
+  ...config,
+  devTool: process.env.NODE_ENV !== "production",
 });
 ```
-
-Render the bar from a client component:
 
 ```tsx
 "use client";
 
-import { OminityAuthProvider } from "@ominity/next/auth/react";
-import { OminityCommerceProvider } from "@ominity/next/commerce/react";
-import { OminityCustomerAccountsProvider } from "@ominity/next/customer-accounts/react";
-import { OminityDevTool, OminityDevToolProvider } from "@ominity/next/dev-tool";
-import { TrackingProvider } from "@ominity/next/tracking/provider";
+import { OminityDevTool, createOminityDevToolSnapshot } from "@ominity/next/dev-tool";
+import { OminityProvider } from "@ominity/next/react";
 
 export function Providers({ children }: { children: React.ReactNode }) {
-  const debugEnabled = process.env.NODE_ENV !== "production";
+  const enabled = process.env.NODE_ENV !== "production";
 
   return (
-    <OminityDevToolProvider
-      enabled={debugEnabled}
-      initialSnapshot={{
-        integration: {
-          appName: "Storefront",
-          environment: process.env.NODE_ENV,
-          devTool: true,
-        },
-        health: {
-          mode: "live",
-          environment: process.env.NODE_ENV,
-          apiUrl: process.env.NEXT_PUBLIC_OMINITY_API_URL,
-          localeSegmentStrategy: "language",
-          checks: [
-            { label: "API URL", status: "enabled" },
-            { label: "Channel", status: "unknown", severity: "warning" },
-          ],
-        },
+    <OminityProvider
+      devTool={{
+        enabled,
+        snapshot: createOminityDevToolSnapshot({ appName: "Storefront", environment: process.env.NODE_ENV, enabled }),
       }}
     >
-      <OminityAuthProvider>
-        <OminityCustomerAccountsProvider>
-          <OminityCommerceProvider>
-            <TrackingProvider>
-              {children}
-              <OminityDevTool
-                enabled={debugEnabled}
-                endpoint="/api/dev-tool/requests"
-              />
-            </TrackingProvider>
-          </OminityCommerceProvider>
-        </OminityCustomerAccountsProvider>
-      </OminityAuthProvider>
-    </OminityDevToolProvider>
+      {children}
+      <OminityDevTool enabled={enabled} endpoint="/api/dev-tool/requests" />
+    </OminityProvider>
   );
 }
 ```
 
-The Dev Tool uses `OminityDevToolProvider` as a small capability registry.
-`OminityAuthProvider`, `OminityCustomerAccountsProvider`,
-`OminityCommerceProvider`, and `TrackingProvider` auto-register when present.
-If a project deletes or does not use commerce, auth, customer accounts, CMS page
-rendering, or forms, do not render that provider and the related tab is omitted.
-You can still pass manual props to `OminityDevTool` or call
-`useOminityDevToolCapability()` from an app-owned adapter for project-specific
-CMS rendering, cache, forms, or spoof-user actions. Explicit bar props override
-registered values, and `auth={false}` or `customer={false}` can hide those
-surfaces.
+`OminityProvider` renders `OminityDevToolProvider` for you; the customer accounts and tracking state register their
+Dev Tool capability automatically. With `devTool` on, the commerce and customer-account routes log their SDK calls
+in the request log. Auth calls are deliberately left out: their bodies hold passwords and tokens.
+
+You can still pass manual props to `OminityDevTool` or call `useOminityDevToolCapability()` from an app-owned
+adapter for project-specific CMS rendering, cache, forms, or spoof-user actions. Explicit bar props override
+registered values, and `auth={false}` or `customer={false}` can hide those surfaces.
 
 To capture SDK calls, pass a Dev Tool HTTP client into the SDK configuration. Add a
 request context when you want the bar to group calls by the current page request,
@@ -201,6 +168,39 @@ Fix:
 - use the same `sessionSecret` for both write/read paths
 - ensure secret length is at least 32 characters
 - if using unsigned cookies for local testing, set `allowUnsigned: true` explicitly
+
+### `useAuth must be used inside OminityProvider`
+
+Cause: a hook from `@ominity/next/react` renders outside the provider.
+
+Fix:
+
+- render `OminityProvider` once, in a client component around the whole app (usually the root layout)
+- `@ominity/next/auth/react` and `@ominity/next/commerce/react` no longer exist in 2.0; see
+  [`docs/migration-2.0.md`](migration-2.0.md)
+
+### Account or gateway requests return 401 right after signing in
+
+Cause: the user has MFA. Until `verifyMfa` or `verifyRecoveryCode` completes, the session is pending and every
+server route treats the browser as signed out.
+
+Fix:
+
+- check `useAuth().status === "mfa_required"` after `signIn` and show the MFA step
+- set `auth.socialLoginMfaPath` so social sign-ins of MFA users land on the MFA page
+
+### Cart, checkout or account requests return 403 `INVALID_ORIGIN`
+
+Cause: the request's `Origin` does not match `siteUrl`.
+
+Fix:
+
+- set `siteUrl` to the origin the site is opened on, including the port in development
+
+### A promotion code "does nothing"
+
+Ominity drops unknown or inapplicable codes instead of refusing them. `applyPromotionCode` detects this and rejects
+with `code: "PROMOTION_CODE_NOT_APPLIED"` (status 422); show that error to the shopper.
 
 ### OAuth2 or MFA calls fail unexpectedly
 

@@ -46,6 +46,8 @@ export interface AuthSession {
   readonly expiresAt: string;
   readonly userId?: number;
   readonly email?: string;
+  /** The password is checked but the MFA challenge is not done yet. */
+  readonly mfaPending?: boolean;
 }
 
 export interface AuthOAuthTokenInput {

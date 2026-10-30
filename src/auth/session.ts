@@ -112,6 +112,7 @@ export function decodeAuthSession(input: string): AuthSession {
     ...(typeof record.refreshToken === "string" ? { refreshToken: record.refreshToken } : {}),
     ...(typeof record.userId === "number" ? { userId: record.userId } : {}),
     ...(typeof record.email === "string" ? { email: record.email } : {}),
+    ...(record.mfaPending === true ? { mfaPending: true } : {}),
   };
 }
 

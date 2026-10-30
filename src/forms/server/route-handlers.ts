@@ -18,7 +18,6 @@ export interface CreateOminityFormSubmitRouteHandlerConfig {
   readonly recaptchaSecret?: string | undefined;
   readonly recaptchaVerificationUrl?: string | undefined;
   readonly fetchImpl?: typeof fetch | undefined;
-  readonly useMockData?: boolean | undefined;
   readonly formsValidateFormId?: boolean | undefined;
   readonly resolveLanguage?: OminityRequestLanguageResolver | undefined;
   readonly forwardSubmission?: (params: {
@@ -53,7 +52,6 @@ export interface CreateOminityFormUploadPresignRouteHandlerConfig {
   readonly ominityApiKey?: string | undefined;
   readonly ominityBaseUrl?: string | undefined;
   readonly fetchImpl?: typeof fetch | undefined;
-  readonly useMockData?: boolean | undefined;
   readonly siteUrl?: string | undefined;
   readonly resolveLanguage?: OminityRequestLanguageResolver | undefined;
 }
@@ -62,7 +60,6 @@ export interface CreateOminityFormSubmissionUpdateRouteHandlerConfig {
   readonly ominityApiKey?: string | undefined;
   readonly ominityBaseUrl?: string | undefined;
   readonly fetchImpl?: typeof fetch | undefined;
-  readonly useMockData?: boolean | undefined;
   readonly resolveLanguage?: OminityRequestLanguageResolver | undefined;
 }
 
@@ -237,17 +234,6 @@ export function createOminityFormSubmitRouteHandler(
         });
       }
 
-      if (config.useMockData) {
-        return {
-          status: 201,
-          body: {
-            ok: true,
-            mode: "mock",
-            payload: params.payload,
-          },
-        };
-      }
-
       const response = await fetchImpl(`${resolvedBaseUrl}/v1/modules/forms/submissions`, {
         method: "POST",
         headers: withLanguageHeader(
@@ -271,18 +257,17 @@ export function createOminityFormSubmitRouteHandler(
   });
 
   return async (request: Request): Promise<Response> => {
-    if (!config.useMockData && !nonEmpty(config.ominityApiKey)) {
+    if (!nonEmpty(config.ominityApiKey)) {
       return jsonResponse(
         {
-          error: "OMINITY_API_KEY is required when OMINITY_USE_MOCK_DATA=false.",
+          error: "OMINITY_API_KEY is required to submit forms.",
         },
         500,
       );
     }
 
     if (
-      !config.useMockData
-      && config.formsValidateFormId
+      config.formsValidateFormId
       && nonEmpty(config.ominityApiKey)
       && nonEmpty(config.ominityBaseUrl)
     ) {
@@ -327,10 +312,7 @@ export function createOminityFormUploadPresignRouteHandler(
   const getLanguage = createRequestLanguageResolver(config.resolveLanguage);
 
   return async (request: Request): Promise<Response> => {
-    if (
-      !config.useMockData
-      && (!nonEmpty(config.ominityApiKey) || !nonEmpty(config.ominityBaseUrl))
-    ) {
+    if (!nonEmpty(config.ominityApiKey) || !nonEmpty(config.ominityBaseUrl)) {
       return jsonResponse(
         {
           error: "OMINITY_API_URL and OMINITY_API_KEY are required for file uploads.",
@@ -363,17 +345,6 @@ export function createOminityFormUploadPresignRouteHandler(
     }
 
     const { key, path } = buildTempPath(payload.formId, payload.filename);
-
-    if (config.useMockData) {
-      return jsonResponse({
-        key,
-        url: "",
-        headers: {},
-        publicUrl: publicUrlFromRequest(request, key, config.siteUrl),
-        path,
-        filename: key.split("/").pop() ?? "upload",
-      });
-    }
 
     try {
       const sdk = new Ominity({
@@ -428,10 +399,7 @@ export function createOminityFormSubmissionUpdateRouteHandler(
       return jsonResponse({ error: "Invalid submission ID." }, 400);
     }
 
-    if (
-      !config.useMockData
-      && (!nonEmpty(config.ominityApiKey) || !nonEmpty(config.ominityBaseUrl))
-    ) {
+    if (!nonEmpty(config.ominityApiKey) || !nonEmpty(config.ominityBaseUrl)) {
       return jsonResponse(
         { error: "OMINITY_API_URL and OMINITY_API_KEY are required." },
         500,
@@ -453,18 +421,6 @@ export function createOminityFormSubmissionUpdateRouteHandler(
 
     if ("data" in record && !asObjectRecord(record.data)) {
       return jsonResponse({ error: "Submission data must be an object." }, 400);
-    }
-
-    if (config.useMockData) {
-      return jsonResponse(
-        {
-          resource: "form_submission",
-          id: submissionId,
-          ...(record.data && typeof record.data === "object" ? { data: record.data } : {}),
-          updatedAt: new Date().toISOString(),
-        },
-        200,
-      );
     }
 
     const response = await fetchImpl(

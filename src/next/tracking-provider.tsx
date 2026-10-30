@@ -2,7 +2,7 @@
 
 import { usePathname, useSearchParams } from "next/navigation.js";
 import type { ReactNode } from "react";
-import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createContext, Suspense, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { useOminityDebugCapability } from "../debug/context.js";
 import type { OminityDebugTrackingEvent, OminityDebugTrackingInfo } from "../debug/types.js";
@@ -462,8 +462,17 @@ export function TrackingPageMetadata(props: TrackingPageMetadataProps) {
   return null;
 }
 
-function resolveSearch(searchParams: ReturnType<typeof useSearchParams>): string {
-  const value = searchParams?.toString();
+/**
+ * Reads the query string in its own Suspense boundary, so the provider (and the app below it) never suspends on
+ * `useSearchParams` during static rendering.
+ */
+function SearchParamsListener({ onChange }: { readonly onChange: (search: string) => void }) {
+  const value = useSearchParams()?.toString() ?? "";
+  useEffect(() => onChange(value), [onChange, value]);
+  return null;
+}
+
+function resolveSearch(value: string): string {
   if (!value) {
     return "";
   }
@@ -519,7 +528,7 @@ function normalizeUrlValue(value: string | null | undefined): string | undefined
 
 export function TrackingProvider(props: TrackingProviderProps) {
   const pathname = usePathname();
-  const searchParams = useSearchParams();
+  const [search, setSearch] = useState(() => (typeof window === "undefined" ? "" : window.location.search.replace(/^\?/, "")));
   const visitorIdRef = useRef<string | null>(null);
   const lastPageKeyRef = useRef<string | null>(null);
   const lastTrackedUrlRef = useRef<string | null>(null);
@@ -543,7 +552,7 @@ export function TrackingProvider(props: TrackingProviderProps) {
   });
 
   const enabled = props.enabled !== false;
-  const pageKey = `${pathname ?? ""}${resolveSearch(searchParams)}`;
+  const pageKey = `${pathname ?? ""}${resolveSearch(search)}`;
   const endpoint = asNonEmptyString(props.endpoint) ?? DEFAULT_TRACKING_ENDPOINT;
   const queueKey = asNonEmptyString(props.queueKey) ?? DEFAULT_QUEUE_KEY;
   const sessionKey = asNonEmptyString(props.sessionKey) ?? DEFAULT_SESSION_KEY;
@@ -933,6 +942,9 @@ export function TrackingProvider(props: TrackingProviderProps) {
 
   return (
     <TrackingPageMetadataContext.Provider value={pageMetadataRegistryRef.current}>
+      <Suspense fallback={null}>
+        <SearchParamsListener onChange={setSearch} />
+      </Suspense>
       {props.children}
     </TrackingPageMetadataContext.Provider>
   );

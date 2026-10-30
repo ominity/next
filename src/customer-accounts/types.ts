@@ -232,13 +232,21 @@ export interface CustomerSubscriptionsClient {
 }
 
 export interface CustomerAccountsClient {
+  /** @deprecated Use `sdk.commerce.customers` with `useOminityCustomerSdkQuery` / `useOminityCustomerSdkMutation` from `@ominity/next/sdk/react`. */
   readonly customer: ActiveCustomerClient;
+  /** @deprecated Use `sdk.commerce.customerAddresses` with `useOminityCustomerSdkQuery` / `useOminityCustomerSdkMutation` from `@ominity/next/sdk/react`. */
   readonly addresses: CustomerAddressesClient;
+  /** @deprecated Use `sdk.commerce.customerGroups` with `useOminityCustomerSdkQuery` / `useOminityCustomerSdkMutation` from `@ominity/next/sdk/react`. */
   readonly groups: CustomerGroupsClient;
+  /** @deprecated Use `sdk.commerce.customerMandates` with `useOminityCustomerSdkQuery` / `useOminityCustomerSdkMutation` from `@ominity/next/sdk/react`. */
   readonly mandates: CustomerMandatesClient;
+  /** @deprecated Use `sdk.commerce.customerPayments` with `useOminityCustomerSdkQuery` / `useOminityCustomerSdkMutation` from `@ominity/next/sdk/react`. */
   readonly payments: CustomerPaymentsClient;
+  /** @deprecated Use `sdk.commerce.customerOrders` with `useOminityCustomerSdkQuery` / `useOminityCustomerSdkMutation` from `@ominity/next/sdk/react`. */
   readonly orders: CustomerOrdersClient;
+  /** @deprecated Use `sdk.commerce.customerInvoices` with `useOminityCustomerSdkQuery` / `useOminityCustomerSdkMutation` from `@ominity/next/sdk/react`. */
   readonly invoices: CustomerInvoicesClient;
+  /** @deprecated Use `sdk.commerce.customerSubscriptions` with `useOminityCustomerSdkQuery` / `useOminityCustomerSdkMutation` from `@ominity/next/sdk/react`. */
   readonly subscriptions: CustomerSubscriptionsClient;
   getContext(options?: CustomerAccountsRequestOptions): Promise<CustomerAccountContext>;
   switchCustomer(

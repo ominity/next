@@ -1,224 +1,252 @@
 # Auth guide
 
-`@ominity/next/auth` provides a server-first auth client on top of `@ominity/api-typescript@^1.4.5`.
+Sign-in runs on the server. The auth routes exchange credentials for OAuth tokens, keep them in an encrypted,
+HttpOnly session cookie and return only the signed-in state to the browser. Client components read and change that
+state with `useAuth` and `useUser` from `@ominity/next/react`. Every value they return is an
+`@ominity/api-typescript` model (`User`, `UserMfaMethod`, `UserRecoveryCode`, `UserLogin`, …).
 
-## Scope
+Requires `@ominity/api-typescript` `^1.6.0`.
 
-- OAuth2 token issuance (`issueToken`, `issuePasswordToken`, `issueRefreshToken`)
-- user access token issuance (`issueUserAccessToken`)
-- MFA methods (list/get/enable/disable/send/validate)
-- recovery codes (list/regenerate/validate)
-- user OAuth accounts and user customers
-- user login activity recording, listing, and detail retrieval
-- password reset link + password update
-- signed session payload helpers (`sealAuthSession` / `unsealAuthSession`)
+## Setup
 
-## Create the auth client
+Mount the routes once with `createOminityRouteHandlers` (see the [README](../README.md#one-route-file-for-every-server-route))
+and wrap the app in `OminityProvider`:
 
 ```ts
-import { createAuthClient } from "@ominity/next/auth";
+// app/api/[...ominity]/route.ts
+import { createOminityRouteHandlers } from "@ominity/next/routes";
 
-export const authClient = createAuthClient({
-  sdk: {
-    serverURL: process.env.OMINITY_API_URL ?? "",
-    security: {
-      apiKey: process.env.OMINITY_API_KEY ?? "",
-    },
-  },
-  debug: {
-    enabled: process.env.NODE_ENV !== "production",
-  },
-});
-```
-
-## OAuth2 flows
-
-```ts
-const token = await authClient.issuePasswordToken({
-  username: "john@example.com",
-  password: "secret",
-  clientId: process.env.OMINITY_OAUTH_CLIENT_ID ?? "",
-  clientSecret: process.env.OMINITY_OAUTH_CLIENT_SECRET ?? "",
-});
-
-const refreshed = await authClient.issueRefreshToken({
-  refreshToken: token.refreshToken ?? "",
-  clientId: process.env.OMINITY_OAUTH_CLIENT_ID ?? "",
-  clientSecret: process.env.OMINITY_OAUTH_CLIENT_SECRET ?? "",
-});
-```
-
-For non-password grants, use `issueToken` and pass explicit grant parameters.
-
-## MFA and recovery
-
-```ts
-const methods = await authClient.listUserMfaMethods({ userId: 7 });
-await authClient.sendUserMfaCode({ userId: 7, method: "totp" });
-await authClient.validateUserMfaCode({ userId: 7, method: "totp", code: "123456" });
-
-const codes = await authClient.listUserRecoveryCodes({ userId: 7 });
-await authClient.validateUserRecoveryCode({ userId: 7, code: "abc-123" });
-```
-
-## Login activity
-
-The standard password login, registration auto-login, and social-provider
-callback handlers record successful interactive sign-ins automatically. They
-resolve the IP address and user agent from the server request and authenticate
-the activity request with the user access token stored in the encrypted session.
-Token refreshes and session restoration do not create login records.
-
-Activity recording is enabled by default. A recording failure does not reject an
-otherwise valid login. Connect the error callback to application monitoring when
-you need operational visibility:
-
-```ts
-const authConfig = {
+export const { GET, POST, PATCH, PUT, DELETE } = createOminityRouteHandlers({
   ominityBaseUrl: process.env.OMINITY_API_URL,
-  authClientId: process.env.OMINITY_OAUTH_CLIENT_ID,
-  authClientSecret: process.env.OMINITY_OAUTH_CLIENT_SECRET,
+  ominityApiKey: process.env.OMINITY_API_KEY,
+  authClientId: process.env.OMINITY_AUTH_CLIENT_ID,
+  authClientSecret: process.env.OMINITY_AUTH_CLIENT_SECRET,
   authSessionSecret: process.env.OMINITY_AUTH_SESSION_SECRET,
-  onLoginActivityError(error: unknown) {
-    console.error("Could not record login activity", error);
+  siteUrl: process.env.NEXT_PUBLIC_SITE_URL,
+  nodeEnv: process.env.NODE_ENV,
+  auth: {
+    socialLoginSuccessPath: "/account",
+    socialLoginFailurePath: "/auth/login",
+    socialLoginMfaPath: "/auth/mfa",
   },
-};
+});
 ```
 
-Add one optional catch-all route to serve both the list and item endpoints:
+```tsx
+// app/providers.tsx
+"use client";
+
+import { OminityProvider } from "@ominity/next/react";
+
+export function Providers({ children }: { children: React.ReactNode }) {
+  return <OminityProvider>{children}</OminityProvider>;
+}
+```
+
+`authSessionSecret` must be at least 32 characters; production refuses to start without one. Other auth options:
+`authScope`, `authCookieName`, `authCookieMaxAgeSeconds`, `channelId`, `resolveLanguage`, `loginActivityEnabled`,
+`onLoginActivityError` and `debugEnabled`. `auth.socialLoginSuccessPath`, `auth.socialLoginFailurePath` and
+`auth.socialLoginMfaPath` (defaults `/`, `/login` and the success path) may be functions, evaluated per request, e.g. to follow the channel's default locale. Pass
+`auth: false` to switch the routes off.
+
+The routes below `/api/auth`:
+
+| Method | Path | Behavior |
+| --- | --- | --- |
+| `POST` | `login` | Password sign-in |
+| `POST` | `register` | Create a user and sign in |
+| `POST` | `logout` | Clear the session |
+| `GET` | `me` | Current `OminityAuthState` |
+| `POST` | `refresh` | Refresh the OAuth tokens in the session |
+| `GET` | `mfa/methods` | Methods of the pending sign-in |
+| `POST` | `mfa/send` | Send a code (email, SMS) |
+| `POST` | `mfa/validate`, `mfa/recovery/validate` | Complete a pending sign-in |
+| `POST` | `password/forgot`, `password/reset` | Password reset |
+| `GET` | `login-activity[/{id}]` | The user's sign-in history |
+| `GET` | `social`, `social/{providerId}/start`, `social/{providerId}/callback` | Social sign-in |
+
+## Auth state
 
 ```ts
-// app/api/auth/login-activity/[[...path]]/route.ts
-import { createOminityAuthLoginActivityRouteHandlers } from "@ominity/next/auth/server";
-import { authConfig } from "@/lib/ominity-auth";
-
-export const { GET } = createOminityAuthLoginActivityRouteHandlers(authConfig);
+type OminityAuthState =
+  | { status: "anonymous" }
+  | { status: "mfa_required"; methods: ReadonlyArray<UserMfaMethod> }
+  | { status: "authenticated"; user: User; expiresAt: string };
 ```
 
-The browser never supplies a user ID or access token. The route reads both from
-the encrypted HttpOnly session, so it can only return the current user’s records.
-The collection accepts `page`, `limit`, `sort`, `id`, `ipAddress`, and `location`.
-Results default to newest first and include pagination metadata.
+`signIn`, `register`, `verifyMfa`, `verifyRecoveryCode` and `refresh` resolve to this state. `useAuth().status` is
+`"loading"` until the first `me` request completes.
 
-For custom server flows, the lower-level auth client exposes all three operations:
+## `useAuth`
 
-```ts
-await authClient.recordUserLogin({
-  userId: 7,
-  ipAddress: "203.0.113.10",
-  userAgent: "Browser user agent",
-});
-
-const activity = await authClient.listUserLogins({
-  userId: 7,
-  page: 1,
-  limit: 20,
-  sort: "-created_at",
-});
-
-const login = await authClient.getUserLogin({ userId: 7, loginId: 42 });
-```
-
-Client components can load and render activity without implementing request or
-pagination state:
+| Member | |
+| --- | --- |
+| `status`, `ready` | Auth status; `ready` once it is known |
+| `user`, `expiresAt` | The SDK `User` and session expiry when authenticated, otherwise `null` |
+| `mfaMethods` | Methods that can complete a pending sign-in |
+| `pending`, `error` | Any auth request in flight; the last failure as `OminityActionError` |
+| `signIn({ email, password })` | Password sign-in |
+| `register({ firstName, email, password, lastName? })` | Create the user and sign in |
+| `signOut()` | End the session |
+| `sendMfaCode(method)` | Send a code for `email` or `sms` |
+| `verifyMfa(method, code)`, `verifyRecoveryCode(code)` | Complete a pending sign-in |
+| `requestPasswordReset({ email, redirectUrl })` | Send a reset link to `redirectUrl` |
+| `resetPassword({ email, token, password })` | Complete a reset |
+| `listSocialProviders()` | Enabled social providers (`id`, `provider`, `name`, `icon`, `isEnabled`) |
+| `socialSignInUrl(providerId)` | URL that starts a social sign-in |
+| `refresh()` | Reload the state from the server |
+| `setUser(user)` | Replace the signed-in user (used by `useUser`) |
 
 ```tsx
 "use client";
 
-import { useOminityLoginActivity } from "@ominity/next/auth/react";
+import { useAuth } from "@ominity/next/react";
+import { useRouter } from "next/navigation";
 
-export function LoginActivity() {
-  const { items, page, loading, error, refresh, get } =
-    useOminityLoginActivity({ limit: 20 });
+export function LoginForm() {
+  const auth = useAuth();
+  const router = useRouter();
 
-  // Render items in the project’s own design.
+  async function submit(form: FormData) {
+    const state = await auth.signIn({
+      email: String(form.get("email")),
+      password: String(form.get("password")),
+    });
+    router.push(state.status === "mfa_required" ? "/auth/mfa" : "/account");
+  }
+
+  return (
+    <form action={submit}>
+      <input name="email" type="email" />
+      <input name="password" type="password" />
+      <button disabled={auth.pending}>Sign in</button>
+      {auth.error && <p>{auth.error.message}</p>}
+    </form>
+  );
 }
 ```
 
-## Social-provider login
+## MFA at sign-in
 
-Add one optional catch-all route for provider discovery, starting OAuth, and
-completing its callback:
-
-```ts
-// app/api/auth/social/[[...path]]/route.ts
-import { createOminityAuthSocialRouteHandlers } from "@ominity/next/auth/server";
-import { authConfig } from "@/lib/ominity-auth";
-
-export const { GET } = createOminityAuthSocialRouteHandlers({
-  ...authConfig,
-  siteUrl: process.env.NEXT_PUBLIC_SITE_URL,
-  socialLoginSuccessPath: "/account",
-  socialLoginFailurePath: "/login",
-});
-```
-
-The route exposes:
-
-- `GET /api/auth/social` — enabled providers for the branded login UI
-- `GET /api/auth/social/{providerId}/start` — creates the provider redirect and
-  sends the browser to it
-- `GET /api/auth/social/{providerId}/callback?code=...` — consumes the one-time
-  code, creates the encrypted user session, records login activity, and redirects
-  to the configured success or failure page
-
-A login button can be a normal same-origin link:
+A password or social sign-in of a user with MFA returns `mfa_required`. The session is pending: `me` keeps answering
+`mfa_required`, a refresh never completes it, and the SDK gateway, commerce and customer-account routes treat the
+browser as signed out until `verifyMfa` or `verifyRecoveryCode` succeeds. Login activity is recorded only then.
 
 ```tsx
-<a href={`/api/auth/social/${provider.id}/start`}>
-  Continue with {provider.name}
-</a>
+const auth = useAuth();
+
+if (auth.status === "mfa_required") {
+  // auth.mfaMethods: [{ method: "totp", … }, { method: "email", … }]
+  await auth.sendMfaCode("email");
+  await auth.verifyMfa("email", code); // or auth.verifyRecoveryCode("ABC-123")
+}
 ```
 
-The callback accepts only provider accounts already linked to an Ominity user.
-An unlinked provider identity redirects with
-`socialError=SOCIAL_ACCOUNT_NOT_LINKED`; it is never matched to an existing user
-by email automatically. The super-admin API key is used only by the server route
-to issue the linked user's access token, and the browser receives only the
-encrypted HttpOnly session cookie.
+A social sign-in that still needs the second factor redirects to `auth.socialLoginMfaPath` (falling back to the
+success path) with `socialLogin=mfa_required`.
 
 ## Password reset
 
 ```ts
-await authClient.sendPasswordResetLink({
-  email: "john@example.com",
-  redirectUrl: "https://app.example.com/reset",
+await auth.requestPasswordReset({
+  email,
+  redirectUrl: new URL("/auth/reset-password", window.location.origin).toString(),
 });
 
-await authClient.resetPassword({
-  email: "john@example.com",
-  token: "reset-token",
-  password: "new-password",
-});
+// On the reset page, with the token and email from the link:
+await auth.resetPassword({ email, token, password });
 ```
 
-## Signed sessions and cookies
+## Social sign-in
 
-Use signed session payloads for cookie integrity.
+```tsx
+const providers = await auth.listSocialProviders();
 
-```ts
-import { createAuthSession, sealAuthSession, unsealAuthSession } from "@ominity/next/auth";
-
-const session = createAuthSession(token, { userId: 7 });
-const signed = await sealAuthSession(session, {
-  secret: process.env.AUTH_SESSION_SECRET ?? "",
-});
-const parsed = await unsealAuthSession(signed, {
-  secret: process.env.AUTH_SESSION_SECRET ?? "",
-});
+{providers.map((provider) => (
+  <a key={provider.id} href={auth.socialSignInUrl(provider.id)}>Continue with {provider.name}</a>
+))}
 ```
 
-`@ominity/next/next` also exposes cookie helpers:
+The callback consumes the one-time code, creates the session and redirects with `socialLogin=success` (or to the
+MFA path with `socialLogin=mfa_required`), or to the
+failure path with `socialLogin=error` and `socialError` (`SOCIAL_ACCOUNT_NOT_LINKED`, `SOCIAL_LOGIN_USER_MISMATCH`,
+`SOCIAL_LOGIN_USER_UNAVAILABLE` or `SOCIAL_LOGIN_FAILED`). Only provider accounts already linked to an Ominity user
+can sign in; they are never matched to a user by email. The API key is used only on the server to issue the linked
+user's token.
 
-- `writeAuthSessionCookie` (async, signs by default when `sessionSecret` is set)
-- `readAuthSessionCookie` (async, validates signature when `sessionSecret` is set)
-- `clearAuthSessionCookie`
+## `useUser`
 
-## Security recommendations
+The signed-in user's own settings, through the SDK with the user's session (`users/{self}/**` on the gateway).
 
-- keep auth operations server-side (Route Handlers / Server Actions)
-- expose login activity through the session-bound route handler
-- do not expose OAuth client secrets to client bundles
-- prefer signed cookies (`sessionSecret`) over unsigned payload cookies
-- use long, random session secrets (32+ chars)
-- treat password grant as legacy-friendly and scope it tightly
+| Member | |
+| --- | --- |
+| `user`, `ready`, `pending`, `error` | As in `useAuth`, plus shared state for these actions |
+| `update(body)` | `UserUpdateInput` (profile fields or password); returns the updated `User` |
+| `mfaMethods`, `mfaLoading`, `refreshMfa()` | The user's `UserMfaMethod`s |
+| `enableMfa(method)` | Starts enabling a method; `totp` returns `details.qrCode` and `details.secret` |
+| `confirmMfa(method, code)` | Confirms the method; resolves `true` when the code was valid |
+| `disableMfa(method)` | Turns a method off |
+| `sendMfaCode(method)` | Sends a code for a method being set up |
+| `recoveryCodes()`, `regenerateRecoveryCodes()` | `UserRecoveryCode`s |
+
+```tsx
+"use client";
+
+import type { UserMfaMethod } from "@ominity/api-typescript/models/identity/user-mfa-method";
+import { useUser } from "@ominity/next/react";
+import { useState } from "react";
+
+export function AuthenticatorSetup() {
+  const profile = useUser();
+  const [setup, setSetup] = useState<UserMfaMethod | null>(null);
+  const [code, setCode] = useState("");
+
+  if (!setup) return <button onClick={async () => setSetup(await profile.enableMfa("totp"))}>Set up</button>;
+
+  return (
+    <div>
+      {setup.details?.qrCode && <img src={setup.details.qrCode} alt="Scan with your authenticator app" />}
+      <input value={code} onChange={(event) => setCode(event.target.value)} />
+      <button disabled={profile.pending} onClick={() => void profile.confirmMfa("totp", code)}>Confirm</button>
+    </div>
+  );
+}
+```
+
+## `useLoginActivity`
+
+The user's sign-in history as SDK `UserLogin`s, newest first, with the paginated query result of
+[`useOminitySdkPaginatedQuery`](sdk.md#paginated-lists).
+
+```tsx
+const activity = useLoginActivity({ pageSize: 10 });
+
+activity.items.map((login) => `${login.browser} · ${login.ipAddress} · ${login.createdAt}`);
+```
+
+Successful password, registration and linked social sign-ins are recorded automatically, with the IP address and user
+agent of the request. Token refreshes and session restores are not. A failed recording never fails the sign-in; pass
+`onLoginActivityError` to report it, or `loginActivityEnabled: false` to turn recording off.
+
+## Server-side helpers
+
+For custom server flows, `@ominity/next/auth` keeps the lower-level pieces:
+
+- `createAuthClient({ sdk, debug })`: OAuth2 grants (`issueToken`, `issuePasswordToken`, `issueRefreshToken`,
+  `issueUserAccessToken`), MFA methods and recovery codes, login activity (`recordUserLogin`, `listUserLogins`,
+  `getUserLogin`), OAuth accounts, user customers and password reset;
+- `createAuthSession`, `sealAuthSession`, `unsealAuthSession` and `isAuthSessionExpired` for signed sessions;
+- `readOminityAuthSession` and `createOminityUserAccessSdk` to call the API as the signed-in user from your own
+  route handlers.
+
+`@ominity/next/auth/server` exports each auth route factory separately
+(`createOminityAuthLoginRouteHandler`, `createOminityAuthSocialRouteHandlers`, …) for projects that want their own
+route files. `@ominity/next/next` has the cookie helpers `readAuthSessionCookie`, `writeAuthSessionCookie` and
+`clearAuthSessionCookie`.
+
+## Security
+
+- The browser never receives the OAuth client secret, the API key, or the user's access and refresh tokens.
+- Use a long, random `authSessionSecret` and the same one for every route that reads the session.
+- With `devTool` on, auth requests stay out of the Dev Tool request log, because their bodies hold passwords and
+  tokens.

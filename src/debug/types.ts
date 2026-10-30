@@ -87,7 +87,6 @@ export interface OminityDebugIntegrationInfo {
   readonly route?: string;
   readonly locale?: string;
   readonly runtime?: string;
-  readonly mockData?: boolean;
   readonly debugLogs?: boolean;
   readonly devTool?: boolean;
   readonly debugBar?: boolean;
@@ -106,7 +105,7 @@ export interface OminityDebugHealthCheck {
 }
 
 export interface OminityDebugConfigHealthInfo {
-  readonly mode?: "mock" | "live" | "hybrid" | "unknown";
+  readonly mode?: "live" | "unknown";
   readonly environment?: string;
   readonly apiUrl?: string;
   readonly channelId?: string;
@@ -203,7 +202,7 @@ export interface OminityDebugChannelInfo {
   readonly id?: string | number;
   readonly identifier?: string;
   readonly name?: string;
-  readonly source?: "detected" | "configured" | "mock" | "unknown";
+  readonly source?: "detected" | "configured" | "unknown";
   readonly active?: boolean;
   readonly defaultLocale?: string;
   readonly defaultLanguageCode?: string;

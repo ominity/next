@@ -155,7 +155,6 @@ export interface OminitySiteSupportConfig {
   readonly apiUrl?: string;
   readonly apiKey?: string;
   readonly channelId?: string;
-  readonly useMockData: boolean;
   readonly debugLogs?: boolean;
   readonly devTool?: boolean;
   readonly debugBar?: boolean;
@@ -192,7 +191,6 @@ export interface ResolveLocaleForVariantInput {
 
 export interface OminitySiteSupportOptions {
   readonly getConfig: () => OminitySiteSupportConfig;
-  readonly mockClient?: CmsClient;
   readonly routeResolvers?: Readonly<Record<string, CmsRouteLinkResolver>>;
   /** @deprecated CMS page requests now use only the supported `filter[slug]` query parameter. */
   readonly stripCmsPagesPathQuery?: boolean;
@@ -205,7 +203,6 @@ export interface OminitySiteSupport {
   readonly cmsLocalizedStringLinkResolver: CmsLinkResolver;
   getDevToolHttpClient(source: OminityDebugSource): HTTPClient | undefined;
   getDebugHttpClient(source: OminityDebugSource): HTTPClient | undefined;
-  getLiveCmsClient(): CmsClient;
   getCmsClient(): CmsClient;
   getCmsPageByPath(input: CmsGetPageByPathInput): Promise<CmsPage | null>;
   getCmsRoutes(input?: CmsGetRoutesInput): Promise<ReadonlyArray<CmsRoute>>;
@@ -579,7 +576,7 @@ export function createOminitySiteSupport(
     return cachedCmsHttpClient;
   };
 
-  const getLiveCmsClient = (): CmsClient => {
+  const getCmsClient = (): CmsClient => {
     if (cachedLiveClient) {
       return cachedLiveClient;
     }
@@ -587,7 +584,7 @@ export function createOminitySiteSupport(
     const config = options.getConfig();
     if (!config.apiUrl || !config.apiKey) {
       throw new Error(
-        "Missing OMINITY_API_URL or OMINITY_API_KEY. Set env vars or enable OMINITY_USE_MOCK_DATA=true.",
+        "Missing OMINITY_API_URL or OMINITY_API_KEY.",
       );
     }
 
@@ -611,15 +608,6 @@ export function createOminitySiteSupport(
     });
 
     return cachedLiveClient;
-  };
-
-  const getCmsClient = (): CmsClient => {
-    const config = options.getConfig();
-    if (config.useMockData && options.mockClient) {
-      return options.mockClient;
-    }
-
-    return getLiveCmsClient();
   };
 
   const getCmsPageByPath = async (
@@ -754,7 +742,7 @@ export function createOminitySiteSupport(
       countries: context.countries,
       currencies: context.currencies,
       countryCurrencyMap: context.countryCurrencyMap,
-      source: config.useMockData ? "mock" : "detected",
+      source: "detected",
     });
   };
 
@@ -1010,7 +998,6 @@ export function createOminitySiteSupport(
     cmsLocalizedStringLinkResolver,
     getDevToolHttpClient,
     getDebugHttpClient,
-    getLiveCmsClient,
     getCmsClient,
     getCmsPageByPath,
     getCmsRoutes,
