@@ -18,6 +18,7 @@ import {
 import {
   asNonEmptyString,
   createRequestLanguageResolver,
+  isCrossSiteRequest,
   jsonError,
   jsonResponse,
   type MaybePromise,
@@ -381,18 +382,6 @@ function mappedErrorResponse(
   );
 }
 
-function expectedOrigin(siteUrl: string | undefined): string | undefined {
-  const value = asNonEmptyString(siteUrl);
-  return value ? new URL(value).origin : undefined;
-}
-
-function isSameOrigin(request: Request, configuredOrigin: string | undefined): boolean {
-  if (request.headers.get("sec-fetch-site") === "cross-site") return false;
-  const origin = asNonEmptyString(request.headers.get("origin"));
-  if (!origin) return true;
-  return origin === (configuredOrigin ?? new URL(request.url).origin);
-}
-
 function idempotencyConfig(value: OminityActionIdempotency | undefined): {
   readonly enabled: boolean;
   readonly required: boolean;
@@ -428,7 +417,6 @@ export function createOminityAction<
 >(
   options: OminityActionOptions<TContext, TQuery, TBody, TParams, TResult, TResponse>,
 ): OminityActionHandler {
-  const configuredOrigin = expectedOrigin(options.siteUrl);
   const idempotency = idempotencyConfig(options.idempotency);
 
   return async (request, routeContext = {}): Promise<Response> => {
@@ -437,7 +425,7 @@ export function createOminityAction<
       response.headers.set("Allow", options.method);
       return noStore(response);
     }
-    if (options.sameOrigin && !isSameOrigin(request, configuredOrigin)) {
+    if (options.sameOrigin && isCrossSiteRequest(request, options.siteUrl)) {
       return noStore(jsonError(
         403,
         "INVALID_ORIGIN",

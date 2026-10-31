@@ -10,10 +10,11 @@ import {
   asNonEmptyString,
   asObjectRecord,
   createRequestLanguageResolver,
+  isCrossSiteRequest,
   jsonError,
   jsonResponse,
-  parseJsonBody,
   type MaybePromise,
+  parseJsonBody,
 } from "../../server/route-utils.js";
 import {
   CUSTOMER_PERMISSIONS,
@@ -114,17 +115,9 @@ function invalidMutationOrigin(
   config: OminityCustomerAccountsRouteHandlerConfig,
   request: Request,
 ): Response | null {
-  if (request.headers.get("sec-fetch-site") === "cross-site") {
-    return noStore(jsonError(403, "INVALID_ORIGIN", "This request must come from the same site."));
-  }
-  const origin = asNonEmptyString(request.headers.get("origin"));
-  if (!origin) return null;
-  const expected = asNonEmptyString(config.siteUrl)
-    ? new URL(config.siteUrl as string).origin
-    : new URL(request.url).origin;
-  return origin === expected
-    ? null
-    : noStore(jsonError(403, "INVALID_ORIGIN", "This request must come from the same site."));
+  return isCrossSiteRequest(request, config.siteUrl)
+    ? noStore(jsonError(403, "INVALID_ORIGIN", "This request must come from the same site."))
+    : null;
 }
 
 function errorStatus(error: unknown, depth = 0): number {

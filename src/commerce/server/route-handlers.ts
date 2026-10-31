@@ -18,6 +18,7 @@ import {
   asNonEmptyString,
   asObjectRecord,
   createRequestLanguageResolver,
+  isCrossSiteRequest,
   jsonError,
   loadNextCookiesStore,
   type MaybePromise,
@@ -253,14 +254,6 @@ export function createOminityCommerceRouteHandlers(config: OminityCommerceRouteH
     return remembered || (owner?.customerId && order.customerId === owner.customerId) ? { order, owner } : null;
   }
 
-  function crossSite(request: Request): boolean {
-    if (request.headers.get("sec-fetch-site") === "cross-site") return true;
-    const origin = asNonEmptyString(request.headers.get("origin"));
-    if (!origin) return false;
-    const expected = asNonEmptyString(config.siteUrl) ? new URL(config.siteUrl as string).origin : new URL(request.url).origin;
-    return origin !== expected;
-  }
-
   function segments(request: Request): string[] | null {
     const pathname = new URL(request.url).pathname.replace(/\/+$/, "");
     if (!pathname.startsWith(`${basePath}/`)) return null;
@@ -273,7 +266,7 @@ export function createOminityCommerceRouteHandlers(config: OminityCommerceRouteH
   async function handle(method: string, request: Request): Promise<Response> {
     const path = segments(request);
     if (!path) return notFound();
-    if (method !== "GET" && crossSite(request)) {
+    if (method !== "GET" && isCrossSiteRequest(request, config.siteUrl)) {
       return jsonError(403, "INVALID_ORIGIN", "This request must come from the same site.");
     }
     const [resource, id, sub] = path;

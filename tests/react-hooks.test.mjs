@@ -49,6 +49,11 @@ function routes() {
       state.quantity += body.quantity;
       return json(snapshot(), 201);
     }
+    if (url === "/api/commerce/cart/items/item-1" && init.method === "DELETE") {
+      // The change reached Ominity, but the response failed.
+      state.quantity = 0;
+      return json({ error: "The request could not be completed.", code: "COMMERCE_REQUEST_FAILED" }, 502);
+    }
     if (url === "/api/commerce/shipping-methods" || url === "/api/commerce/payment-methods") return json({ items: [] });
     if (url === "/api/commerce/checkout") {
       state.quantity = 0;
@@ -149,5 +154,21 @@ test("the provider settles under StrictMode, which remounts effects in developme
   assert.ok(calls.some((call) => call.url === "/api/commerce/cart"), "the cart loads once auth is known");
   assert.equal(result.current.wishlist.has(6), true, "the stored wishlist survives the remount");
   assert.equal(JSON.parse(window.localStorage.getItem("ominity:wishlist")).length, 1);
+  await unmount();
+});
+
+test("a failed cart change rejects, keeps the error and reloads the cart", async () => {
+  routes();
+  const { result, unmount } = await render();
+  await act(async () => {
+    await result.current.cart.add(product, 2);
+  });
+  assert.equal(result.current.cart.items.length, 1);
+
+  await act(async () => {
+    await assert.rejects(result.current.cart.remove("item-1"), { code: "COMMERCE_REQUEST_FAILED" });
+  });
+  assert.equal(result.current.cart.error.code, "COMMERCE_REQUEST_FAILED");
+  assert.deepEqual(result.current.cart.items, [], "the item is not left on screen to be removed a second time");
   await unmount();
 });

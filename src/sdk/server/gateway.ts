@@ -6,6 +6,7 @@ import { resolveRequestForwardedFor } from "../../server/client-ip.js";
 import {
   asNonEmptyString,
   createRequestLanguageResolver,
+  isCrossSiteRequest,
 } from "../../server/route-utils.js";
 import { DEFAULT_OMINITY_SDK_GATEWAY_PATH } from "../client.js";
 
@@ -180,16 +181,6 @@ function gatewayError(status: number, code: string, detail: string): Response {
   });
 }
 
-function crossSiteRequest(config: OminitySdkGatewayConfig, request: Request): boolean {
-  if (request.headers.get("sec-fetch-site") === "cross-site") return true;
-  const origin = asNonEmptyString(request.headers.get("origin"));
-  if (!origin) return false;
-  const expected = asNonEmptyString(config.siteUrl)
-    ? new URL(config.siteUrl as string).origin
-    : new URL(request.url).origin;
-  return origin !== expected;
-}
-
 async function fingerprint(value: string): Promise<string> {
   const digest = await globalThis.crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
@@ -264,7 +255,7 @@ export function createOminitySdkGatewayRouteHandlers(
       return gatewayError(404, "NOT_FOUND", "This Ominity API route is not available.");
     }
 
-    if (method !== "GET" && crossSiteRequest(config, request)) {
+    if (method !== "GET" && isCrossSiteRequest(request, config.siteUrl)) {
       return gatewayError(403, "INVALID_ORIGIN", "This request must come from the same site.");
     }
 

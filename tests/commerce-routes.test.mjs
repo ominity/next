@@ -80,6 +80,13 @@ function fakeApi() {
       }
       return json({ _embedded: { cart_items: items.get(match[1]) }, count: items.get(match[1]).length });
     }
+    if ((match = path.match(/^\/commerce\/carts\/([^/]+)\/items\/([^/]+)$/)) && request.method === "DELETE") {
+      const kept = items.get(match[1]).filter((item) => item.id !== match[2]);
+      if (kept.length === items.get(match[1]).length) return json({ status: 500, title: "Internal Server Error", detail: "Remove cart item failed." }, 500);
+      items.set(match[1], kept);
+      carts.set(match[1], { ...carts.get(match[1]), totalQuantity: kept.reduce((sum, item) => sum + item.quantity, 0) });
+      return new Response(null, { status: 204 });
+    }
     if (request.method === "POST" && path === "/commerce/orders") {
       const created = order(500 + orders.size, { customerId: body.customerId ?? null, cartId: body.cartId, notes: body.notes ?? "" });
       orders.set(created.id, created);
@@ -146,6 +153,23 @@ test("the browser can only change shopper fields of its own cart", async () => {
   const patch = api.calls.find((entry) => entry.method === "PATCH");
   assert.deepEqual(patch.body, { email: "jamie@example.com", country: "NL", promotionCodes: ["WELCOME"] });
   assert.equal(jar.values.get("ominity_cart_id"), "cart-1");
+});
+
+test("removing an item returns the updated cart, also when the quantity goes to zero", async () => {
+  const { call } = setup();
+  await call("POST", "/cart/items", { productId: 6, quantity: 1 });
+  const { items } = await (await call("POST", "/cart/items", { productId: 7, quantity: 1 })).json();
+  assert.equal(items.length, 2);
+
+  const removed = await call("DELETE", `/cart/items/${items[0].id}`);
+  assert.equal(removed.status, 200);
+  const afterRemove = await removed.json();
+  assert.deepEqual(afterRemove.items.map((item) => item.productId), [7]);
+  assert.equal(afterRemove.cart.totalQuantity, 1);
+
+  const zero = await call("PATCH", `/cart/items/${items[1].id}`, { quantity: 0 });
+  assert.equal(zero.status, 200);
+  assert.deepEqual((await zero.json()).items, []);
 });
 
 test("checkout builds the order from the cart and ignores owner, price and status fields from the browser", async () => {

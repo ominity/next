@@ -30,6 +30,28 @@ export function asNonEmptyString(value: unknown): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
+/**
+ * True when a browser sent this request from another site: the guard for every mutating route. The `Origin` must be
+ * the configured site URL or the origin the request was actually addressed to (so `127.0.0.1`, a LAN address or
+ * another dev port still work); requests without an `Origin` (same-origin GETs, server-to-server calls) pass.
+ */
+export function isCrossSiteRequest(request: Request, siteUrl?: string): boolean {
+  if (request.headers.get("sec-fetch-site") === "cross-site") return true;
+  const origin = asNonEmptyString(request.headers.get("origin"));
+  if (!origin) return false;
+
+  const url = new URL(request.url);
+  const allowed = new Set([url.origin]);
+  const configured = asNonEmptyString(siteUrl);
+  if (configured) allowed.add(new URL(configured).origin);
+  const host = asNonEmptyString(request.headers.get("host"));
+  if (host) {
+    const protocol = asNonEmptyString(request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim()) ?? url.protocol.replace(/:$/, "");
+    allowed.add(`${protocol}://${host}`);
+  }
+  return !allowed.has(origin);
+}
+
 export function jsonResponse(
   body: unknown,
   status = 200,

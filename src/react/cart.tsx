@@ -97,6 +97,8 @@ export function OminityCartProvider({ children, basePath = "/api/commerce" }: { 
     } catch (caught) {
       const failure = toOminitySdkError(caught);
       setError(failure);
+      // A failed change may still have reached Ominity: show what the cart really holds, not a stale copy.
+      if (init?.method) await requestRoute<CartSnapshot>(`${base}/cart`).then(setSnapshot, () => undefined);
       throw failure;
     } finally {
       setPending((count) => count - 1);
