@@ -64,10 +64,18 @@ export function useUser() {
       auth.setUser(user);
       return user;
     }),
+    /**
+     * The methods the channel offers (`authenticator`, `email`, `sms`, …), each with `isEnabled` for this user; empty
+     * when the channel offers none.
+     */
     mfaMethods: (mfa.data?.items ?? []) as ReadonlyArray<UserMfaMethod>,
     mfaLoading: mfa.loading,
-    /** Starts enabling a method; a `totp` method returns `details.qrCode` and `details.secret` for the authenticator app. */
-    enableMfa: (method: string): Promise<UserMfaMethod> => withMfaRefresh((id) => sdk.users.mfaMethods.enable({ id, method })),
+    /**
+     * Starts enabling an offered method. `authenticator` returns `details.qrCode` (an image), `details.uri` and
+     * `details.secret`; `sms` needs `phone` in E.164 format. Email and SMS codes are sent with `sendMfaCode`.
+     */
+    enableMfa: (method: string, options: { readonly phone?: string } = {}): Promise<UserMfaMethod> => withMfaRefresh((id) =>
+      sdk.users.mfaMethods.enable({ id, method, ...(options.phone ? { phone: options.phone } : {}) })),
     /** Confirms an enabled method with a code from it. */
     confirmMfa: (method: string, code: string): Promise<boolean> => withMfaRefresh(async (id) => {
       const result = await sdk.users.mfaMethods.validate({ id, method, code });

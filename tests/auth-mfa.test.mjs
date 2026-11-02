@@ -44,10 +44,10 @@ function api({ mfa }) {
     }
     if (path === "/api/v1/users/7/mfa-methods") {
       return json({ _embedded: { user_mfa_methods: mfa ? [{
-        resource: "user_mfa_method", userId: 7, method: "totp", isEnabled: true, details: { secret: "TOTP-SECRET", qrCode: "data:image/png" },
-      }] : [] }, count: mfa ? 1 : 0 });
+        resource: "user_mfa_method", userId: 7, method: "authenticator", isEnabled: true, details: { secret: "TOTP-SECRET", qrCode: "data:image/png" },
+      }, { resource: "user_mfa_method", userId: 7, method: "sms", isEnabled: false }] : [] }, count: mfa ? 2 : 0 });
     }
-    if (path === "/api/v1/users/7/mfa-methods/totp/validate") {
+    if (path === "/api/v1/users/7/mfa-methods/authenticator/validate") {
       return new Response(JSON.stringify({ success: (await request.clone().text()).includes("123456") }), {
         headers: { "Content-Type": "application/json" },
       });
@@ -81,7 +81,7 @@ test("a user with MFA gets a pending session that grants nothing until the code 
     password: "correct horse",
   }))).json();
   assert.equal(login.status, "mfa_required");
-  assert.deepEqual(login.methods.map((method) => method.method), ["totp"]);
+  assert.deepEqual(login.methods.map((method) => method.method), ["authenticator"], "only the methods the user turned on, under Ominity's own names");
   assert.equal(JSON.stringify(login).includes("TOTP-SECRET"), false, "setup secrets never reach the browser");
   assert.equal(calls.includes("POST /api/v1/users/7/logins"), false, "login activity waits for the second factor");
 
@@ -89,12 +89,12 @@ test("a user with MFA gets a pending session that grants nothing until the code 
   assert.ok(await readOminityAuthSession(config, jar, { allowPendingMfa: true }));
   assert.equal((await (await createOminityAuthMeRouteHandler(config)(new Request(`${SITE}/api/auth/me`))).json()).status, "mfa_required");
 
-  const wrong = await createOminityAuthMfaValidateRouteHandler(config)(post("/api/auth/mfa/validate", { method: "totp", code: "000000" }));
+  const wrong = await createOminityAuthMfaValidateRouteHandler(config)(post("/api/auth/mfa/validate", { method: "authenticator", code: "000000" }));
   assert.equal(wrong.status, 422);
   assert.equal(await readOminityAuthSession(config, jar), null);
 
   const verified = await (await createOminityAuthMfaValidateRouteHandler(config)(post("/api/auth/mfa/validate", {
-    method: "totp",
+    method: "authenticator",
     code: "123456",
   }))).json();
   assert.equal(verified.status, "authenticated");

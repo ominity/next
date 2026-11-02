@@ -136,7 +136,7 @@ browser as signed out until `verifyMfa` or `verifyRecoveryCode` succeeds. Login 
 const auth = useAuth();
 
 if (auth.status === "mfa_required") {
-  // auth.mfaMethods: [{ method: "totp", … }, { method: "email", … }]
+  // auth.mfaMethods: [{ method: "authenticator", … }, { method: "email", … }] (the methods this user turned on)
   await auth.sendMfaCode("email");
   await auth.verifyMfa("email", code); // or auth.verifyRecoveryCode("ABC-123")
 }
@@ -183,7 +183,8 @@ The signed-in user's own settings, through the SDK with the user's session (`use
 | `user`, `ready`, `pending`, `error` | As in `useAuth`, plus shared state for these actions |
 | `update(body)` | `UserUpdateInput` (profile fields or password); returns the updated `User` |
 | `mfaMethods`, `mfaLoading`, `refreshMfa()` | The user's `UserMfaMethod`s |
-| `enableMfa(method)` | Starts enabling a method; `totp` returns `details.qrCode` and `details.secret` |
+| `mfaMethods` | The methods the channel offers, each with `isEnabled` for this user; empty when none are offered |
+| `enableMfa(method, { phone })` | Starts enabling an offered method. `authenticator` returns `details.qrCode` (image), `details.uri` (`otpauth://`) and `details.secret`; `sms` needs `phone` (E.164). Send email and SMS codes with `sendMfaCode` |
 | `confirmMfa(method, code)` | Confirms the method; resolves `true` when the code was valid |
 | `disableMfa(method)` | Turns a method off |
 | `sendMfaCode(method)` | Sends a code for a method being set up |
@@ -201,13 +202,13 @@ export function AuthenticatorSetup() {
   const [setup, setSetup] = useState<UserMfaMethod | null>(null);
   const [code, setCode] = useState("");
 
-  if (!setup) return <button onClick={async () => setSetup(await profile.enableMfa("totp"))}>Set up</button>;
+  if (!setup) return <button onClick={async () => setSetup(await profile.enableMfa("authenticator"))}>Set up</button>;
 
   return (
     <div>
       {setup.details?.qrCode && <img src={setup.details.qrCode} alt="Scan with your authenticator app" />}
       <input value={code} onChange={(event) => setCode(event.target.value)} />
-      <button disabled={profile.pending} onClick={() => void profile.confirmMfa("totp", code)}>Confirm</button>
+      <button disabled={profile.pending} onClick={() => void profile.confirmMfa("authenticator", code)}>Confirm</button>
     </div>
   );
 }

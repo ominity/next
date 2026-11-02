@@ -508,8 +508,6 @@ export function createOminityUserAccessSdk(
   return new Ominity(resolveAuthSdkOptions(config, accessToken, language));
 }
 
-const MFA_CHALLENGE_METHODS = new Set(["totp", "otp", "email", "sms"]);
-
 async function loadSdkUser(config: OminityAuthRouteHandlerConfig, accessToken: string, language?: string): Promise<User> {
   const me = await createOminityUserAccessSdk(config, accessToken, language).me.get();
   if (me.resource !== "user") {
@@ -527,7 +525,8 @@ async function challengeMethods(
 ): Promise<UserMfaMethod[]> {
   const { items } = await createOminityUserAccessSdk(config, accessToken, language).users.mfaMethods.list({ id: userId });
   return items
-    .filter((method) => method.isEnabled && MFA_CHALLENGE_METHODS.has(method.method.toLowerCase()))
+    // Ominity lists the methods the channel offers; the ones this user turned on are the challenge.
+    .filter((method) => method.isEnabled)
     .map(({ details: _details, ...method }) => method);
 }
 

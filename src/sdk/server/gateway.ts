@@ -230,7 +230,9 @@ export function createOminitySdkGatewayRouteHandlers(
       `${upstreamBase}/v1/users/${session.userId}/customers/${customerId}`,
       { method: "GET", headers: upstreamHeaders(session.accessToken, language), redirect: "manual" },
     );
-    await response.body?.cancel();
+    // Read the body to the end. Cancelling it instead leaves the connection unusable inside Next.js: the request that
+    // follows to the same API (the one this check guards) then never finishes.
+    await response.arrayBuffer().catch(() => undefined);
     if (response.status === 403 || response.status === 404) return false;
     if (!response.ok) throw new Error(`Customer membership check failed with status ${response.status}.`);
 

@@ -247,7 +247,7 @@ password or social sign-in of a user with MFA stays pending, and unusable on eve
 ```tsx
 const auth = useAuth();
 const state = await auth.signIn({ email, password });
-if (state.status === "mfa_required") await auth.verifyMfa("totp", code);
+if (state.status === "mfa_required") await auth.verifyMfa("authenticator", code);
 ```
 
 For custom server flows, `@ominity/next/auth` keeps `createAuthClient` (OAuth2 grants, MFA, recovery codes, login

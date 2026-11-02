@@ -312,3 +312,32 @@ test("the gateway reads the encrypted session cookie and ignores expired session
   }, { sessionSecret: secret });
   assert.equal(await readOminityAuthSession({ authSessionSecret: secret }, store), null);
 });
+
+test("the membership check reads its response to the end instead of cancelling it", async () => {
+  // Inside Next.js a cancelled response body leaves the connection unusable, and the request the check guards then
+  // never finishes. Node's own fetch does not show this, so check what the gateway does with the response.
+  const membership = { cancelled: false, read: false };
+  const upstream = upstreamRecorder();
+  const fetchImpl = async (input, init = {}) => {
+    if (new URL(new Request(input, init).url).pathname === "/api/v1/users/7/customers/42") {
+      const bytes = new TextEncoder().encode(JSON.stringify({ customerId: 42 }));
+      return new Response(new ReadableStream({
+        pull(controller) {
+          controller.enqueue(bytes);
+          controller.close();
+          membership.read = true;
+        },
+        cancel() {
+          membership.cancelled = true;
+        },
+      }), { status: 200 });
+    }
+    return upstream.fetchImpl(input, init);
+  };
+  const { handlers } = gateway({ upstream: { calls: upstream.calls, fetchImpl } });
+
+  const response = await handlers.GET(browserRequest("/v1/commerce/customers/42/invoices"));
+  assert.equal(response.status, 200);
+  assert.equal(membership.read, true);
+  assert.equal(membership.cancelled, false);
+});
