@@ -62,6 +62,11 @@ The routes below `/api/auth`:
 | `GET` | `mfa/methods` | Methods of the pending sign-in |
 | `POST` | `mfa/send` | Send a code (email, SMS) |
 | `POST` | `mfa/validate`, `mfa/recovery/validate` | Complete a pending sign-in |
+
+Ominity limits two-factor codes per user: 5 wrong codes in 15 minutes or 20 a day (method codes and recovery codes
+together), and 5 codes sent in 15 minutes. Past that, `mfa/validate` and `mfa/recovery/validate` answer `429`
+`MFA_RATE_LIMITED`, and `mfa/send` answers `429` `MFA_SEND_RATE_LIMITED`, with `Retry-After` and
+`details.retryAfter` (seconds). A wrong code is still `422`.
 | `POST` | `password/forgot`, `password/reset` | Password reset |
 | `GET` | `login-activity[/{id}]` | The user's sign-in history |
 | `GET` | `social`, `social/{providerId}/start`, `social/{providerId}/callback` | Social sign-in |
@@ -209,9 +214,13 @@ The signed-in user's own settings, through the SDK with the user's session (`use
 | `mfaMethods` | The methods the channel offers, each with `isEnabled` for this user; empty when none are offered |
 | `enableMfa(method, { phone })` | Starts enabling an offered method. `authenticator` returns `details.qrCode` (image), `details.uri` (`otpauth://`) and `details.secret`; `sms` needs `phone` (E.164). Send email and SMS codes with `sendMfaCode` |
 | `confirmMfa(method, code)` | Confirms the method; resolves `true` when the code was valid |
-| `disableMfa(method)` | Turns a method off |
-| `sendMfaCode(method)` | Sends a code for a method being set up |
-| `recoveryCodes()`, `regenerateRecoveryCodes()` | `UserRecoveryCode`s |
+| `disableMfa(method, proof?)` | Turns a method off. A method that is on needs `proof`: `{ code }` (a current code of this method; send one first for email and SMS) or `{ recoveryCode }` |
+| `sendMfaCode(method)` | Sends a code (email, SMS) |
+| `recoveryCodes()` | `UserRecoveryCode`s, masked (`••••••K7`) |
+| `regenerateRecoveryCodes(proof?)` | New codes, returned in full this once. With MFA on it needs `proof`: `{ method, code }` or `{ recoveryCode }` |
+
+Wrong proof counts against the same per-user limit as signing in; failures reject with an `OminityActionError`
+(`status` 422 and `reason` `mfa.verification_failed` for a wrong code, 429 with `details.retryAfter` past the limit).
 
 ```tsx
 "use client";

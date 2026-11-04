@@ -36,6 +36,7 @@ import type {
   AuthRegenerateRecoveryCodesInput,
   AuthResetPasswordInput,
   AuthSendPasswordResetLinkInput,
+  AuthDisableMfaInput,
   AuthUserMfaMethodInput,
   AuthValidateMfaInput,
   AuthValidateRecoveryCodeInput,
@@ -293,14 +294,19 @@ export function createAuthClient(options: AuthClientOptions): AuthClient {
       }
     },
 
-    async disableUserMfaMethod(input: AuthUserMfaMethodInput) {
+    async disableUserMfaMethod(input: AuthDisableMfaInput) {
       const userId = normalizeAuthUserId(input.userId);
       const method = ensureNonEmptyString(input.method, "method");
       debug.emit("debug", "Disabling user MFA method", { userId, method });
 
       try {
         const payload = await sdk.users.mfaMethods.disable(
-          { id: userId, method },
+          {
+            id: userId,
+            method,
+            ...(typeof input.code === "string" ? { code: input.code } : {}),
+            ...(typeof input.recoveryCode === "string" ? { recoveryCode: input.recoveryCode } : {}),
+          },
           input.requestOptions,
         );
         return normalizeStatusResult(payload);
@@ -382,6 +388,9 @@ export function createAuthClient(options: AuthClientOptions): AuthClient {
         const payload = await sdk.users.recoveryCodes.regenerate({
           id: userId,
           confirm: input.confirm === true,
+          ...(typeof input.method === "string" ? { method: input.method } : {}),
+          ...(typeof input.code === "string" ? { code: input.code } : {}),
+          ...(typeof input.recoveryCode === "string" ? { recoveryCode: input.recoveryCode } : {}),
         }, input.requestOptions);
         return normalizeRecoveryCodeList(payload);
       } catch (error) {

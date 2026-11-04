@@ -17,6 +17,12 @@ import {
 } from "../sdk/react.js";
 import { useAuth } from "./auth.js";
 
+/** Proof for turning off a method: a current code of that method, or an unused recovery code. */
+export type OminityMfaMethodProof = { readonly code: string } | { readonly recoveryCode: string };
+
+/** Proof for a two-factor security change: a current code of one of the user's enabled methods, or a recovery code. */
+export type OminityMfaProof = { readonly method: string; readonly code: string } | { readonly recoveryCode: string };
+
 /**
  * The signed-in user's own settings: profile and password, MFA methods and recovery codes. Everything goes through
  * the SDK with the user's session.
@@ -82,16 +88,25 @@ export function useUser() {
       if (result.success) await auth.refresh();
       return result.success;
     }),
-    disableMfa: (method: string): Promise<void> => withMfaRefresh(async (id) => {
-      await sdk.users.mfaMethods.disable({ id, method });
+    /**
+     * Turns a method off. A method that is on needs proof: a current `code` of this method (for email and SMS, send
+     * one first with `sendMfaCode`) or an unused `recoveryCode`. Without proof only a setup that was never confirmed
+     * can be removed.
+     */
+    disableMfa: (method: string, proof?: OminityMfaMethodProof): Promise<void> => withMfaRefresh(async (id) => {
+      await sdk.users.mfaMethods.disable({ id, method, ...proof });
       await auth.refresh();
     }),
     sendMfaCode: (method: string): Promise<void> => run(async (id) => {
       await sdk.users.mfaMethods.send({ id, method });
     }),
     recoveryCodes: (): Promise<ReadonlyArray<UserRecoveryCode>> => run(async (id) => (await sdk.users.recoveryCodes.list({ id })).items),
-    regenerateRecoveryCodes: (): Promise<ReadonlyArray<UserRecoveryCode>> => run(async (id) =>
-      (await sdk.users.recoveryCodes.regenerate({ id, confirm: true })).items),
+    /**
+     * Replaces the recovery codes and returns the new ones in full (the only time they are). With MFA on it needs
+     * proof: `method` and a current `code` of that enabled method, or an unused `recoveryCode`.
+     */
+    regenerateRecoveryCodes: (proof?: OminityMfaProof): Promise<ReadonlyArray<UserRecoveryCode>> => run(async (id) =>
+      (await sdk.users.recoveryCodes.regenerate({ id, confirm: true, ...proof })).items),
     refreshMfa: mfa.refresh,
   };
 }

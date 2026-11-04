@@ -35,6 +35,7 @@ import {
   asObjectRecord,
   createRequestLanguageResolver,
   jsonError,
+  jsonResponse,
   loadNextCookiesStore,
   type OminityRequestLanguageResolver,
   parseJsonBody,
@@ -1637,6 +1638,37 @@ export function createOminityAuthMfaMethodsRouteHandler(
   };
 }
 
+/**
+ * Ominity limits two-factor codes per user (wrong codes, and codes sent): a 429 anywhere in the error's cause chain,
+ * with the seconds to wait when Ominity says so.
+ */
+function mfaRateLimitOf(error: unknown, depth = 0): { readonly retryAfter: number | null } | null {
+  if (depth > 3 || typeof error !== "object" || error === null) return null;
+
+  const record = error as {
+    readonly status?: unknown;
+    readonly statusCode?: unknown;
+    readonly retryAfter?: unknown;
+    readonly headers?: unknown;
+    readonly cause?: unknown;
+  };
+  if (record.status === 429 || record.statusCode === 429) {
+    const header = record.headers instanceof Headers ? Number(record.headers.get("retry-after")) : Number.NaN;
+    const seconds = typeof record.retryAfter === "number" ? record.retryAfter : header;
+    return { retryAfter: Number.isFinite(seconds) && seconds > 0 ? Math.ceil(seconds) : null };
+  }
+
+  return mfaRateLimitOf(record.cause, depth + 1);
+}
+
+function mfaRateLimitedResponse(limit: { readonly retryAfter: number | null }, code: string, error: string): Response {
+  return jsonResponse(
+    { error, code, ...(limit.retryAfter !== null ? { details: { retryAfter: limit.retryAfter } } : {}) },
+    429,
+    limit.retryAfter !== null ? { "Retry-After": String(limit.retryAfter) } : undefined,
+  );
+}
+
 export function createOminityAuthMfaSendRouteHandler(
   config: OminityAuthRouteHandlerConfig,
 ): (request: Request) => Promise<Response> {
@@ -1662,15 +1694,25 @@ export function createOminityAuthMfaSendRouteHandler(
     }
 
     const authClient = createServerAuthClient(config, context.session.accessToken, context.language);
-    const result = await authClient.sendUserMfaCode({
-      userId: context.userId,
-      method,
-    });
+    try {
+      const result = await authClient.sendUserMfaCode({
+        userId: context.userId,
+        method,
+      });
 
-    return Response.json({
-      ok: result.success === true,
-      method,
-    });
+      return Response.json({
+        ok: result.success === true,
+        method,
+      });
+    } catch (error) {
+      const limit = mfaRateLimitOf(error);
+      if (limit) {
+        return mfaRateLimitedResponse(limit, "MFA_SEND_RATE_LIMITED", "Too many codes were sent. Try again later.");
+      }
+      return jsonError(502, "MFA_SEND_FAILED", "The code could not be sent.", {
+        message: error instanceof Error ? error.message : "Unknown error",
+      });
+    }
   };
 }
 
@@ -1704,11 +1746,14 @@ export function createOminityAuthMfaValidateRouteHandler(
     }
 
     const authClient = createServerAuthClient(config, context.session.accessToken, context.language);
-    const result = await authClient.validateUserMfaCode({
+    const result: { readonly success?: boolean; readonly limit?: { readonly retryAfter: number | null } | null } = await authClient.validateUserMfaCode({
       userId: context.userId,
       method,
       code,
-    }).catch(() => ({ success: false }));
+    }).catch((error: unknown) => ({ success: false, limit: mfaRateLimitOf(error) }));
+    if (result.limit) {
+      return mfaRateLimitedResponse(result.limit, "MFA_RATE_LIMITED", "Too many wrong codes. Try again later.");
+    }
     if (result.success !== true) {
       return jsonError(422, "INVALID_MFA_CODE", "The code is not valid.");
     }
@@ -1746,10 +1791,13 @@ export function createOminityAuthRecoveryValidateRouteHandler(
     }
 
     const authClient = createServerAuthClient(config, context.session.accessToken, context.language);
-    const result = await authClient.validateUserRecoveryCode({
+    const result: { readonly success?: boolean; readonly limit?: { readonly retryAfter: number | null } | null } = await authClient.validateUserRecoveryCode({
       userId: context.userId,
       code,
-    }).catch(() => ({ success: false }));
+    }).catch((error: unknown) => ({ success: false, limit: mfaRateLimitOf(error) }));
+    if (result.limit) {
+      return mfaRateLimitedResponse(result.limit, "MFA_RATE_LIMITED", "Too many wrong codes. Try again later.");
+    }
     if (result.success !== true) {
       return jsonError(422, "INVALID_RECOVERY_CODE", "The recovery code is not valid.");
     }

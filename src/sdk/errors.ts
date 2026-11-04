@@ -23,6 +23,13 @@ function statusCode(status: number): string {
   return STATUS_CODES[status] ?? (status >= 500 ? "SERVER_ERROR" : "REQUEST_FAILED");
 }
 
+/** Seconds to wait from a 429's `Retry-After` header (Ominity also sends `retryAfter` in the body). */
+function retryAfterOf(error: OminityError): number | undefined {
+  if (error.statusCode !== 429) return undefined;
+  const seconds = Number(error.headers.get("retry-after"));
+  return Number.isFinite(seconds) && seconds > 0 ? seconds : undefined;
+}
+
 /**
  * Turns anything an SDK call throws into an `OminityActionError`. `code` is the API's machine-readable reason when it
  * sends one (for example `subscription.next_period_locked`), otherwise one derived from the status; field messages are
@@ -36,6 +43,7 @@ export function toOminitySdkError(error: unknown): OminityActionError {
       title: error.title,
       ...(error.code ? { reason: error.code } : {}),
       ...(error.fields ? { fields: error.fields } : {}),
+      ...(retryAfterOf(error) ? { retryAfter: retryAfterOf(error) } : {}),
     });
   }
 
@@ -44,7 +52,8 @@ export function toOminitySdkError(error: unknown): OminityActionError {
   }
 
   if (error instanceof OminityError) {
-    return new OminityActionError(error.message, error.statusCode, statusCode(error.statusCode));
+    const retryAfter = retryAfterOf(error);
+    return new OminityActionError(error.message, error.statusCode, statusCode(error.statusCode), retryAfter ? { retryAfter } : undefined);
   }
 
   if (error instanceof HTTPClientError) {

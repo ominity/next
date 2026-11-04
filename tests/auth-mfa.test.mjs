@@ -6,7 +6,9 @@ import { HTTPClient } from "@ominity/api-typescript";
 import {
   createOminityAuthLoginRouteHandler,
   createOminityAuthMeRouteHandler,
+  createOminityAuthMfaSendRouteHandler,
   createOminityAuthMfaValidateRouteHandler,
+  createOminityAuthRecoveryValidateRouteHandler,
   createOminityAuthSocialRouteHandlers,
   readOminityAuthSession,
 } from "../dist/auth/server/index.js";
@@ -23,7 +25,7 @@ function cookieJar() {
   };
 }
 
-function api({ mfa }) {
+function api({ mfa, limited = false }) {
   const calls = [];
   const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/hal+json" } });
   const fetcher = async (input, init) => {
@@ -46,6 +48,13 @@ function api({ mfa }) {
       return json({ _embedded: { user_mfa_methods: mfa ? [{
         resource: "user_mfa_method", userId: 7, method: "authenticator", isEnabled: true, details: { secret: "TOTP-SECRET", qrCode: "data:image/png" },
       }, { resource: "user_mfa_method", userId: 7, method: "sms", isEnabled: false }] : [] }, count: mfa ? 2 : 0 });
+    }
+    const tooMany = (detail) => new Response(JSON.stringify({
+      status: 429, title: "Too Many Requests", detail, retryAfter: 540,
+      _links: { documentation: { href: "https://docs.ominity.com/overview/handling-errors", type: "text/html" } },
+    }), { status: 429, headers: { "Content-Type": "application/json", "Retry-After": "540" } });
+    if (limited && (path.endsWith("/validate") || path.endsWith("/send"))) {
+      return tooMany("Too many wrong codes. Try again later.");
     }
     if (path === "/api/v1/users/7/mfa-methods/authenticator/validate") {
       return new Response(JSON.stringify({ success: (await request.clone().text()).includes("123456") }), {
@@ -148,4 +157,34 @@ test("a social sign-in that still needs MFA goes to the MFA page with a pending 
     const session = await readOminityAuthSession(config, jar);
     assert.equal(session === null, mfa, "the MFA user's session stays pending");
   }
+});
+
+test("too many wrong codes answer 429 with the wait, not \"invalid code\"", async () => {
+  const jar = cookieJar();
+  globalThis.__ominityTestCookies = jar;
+  const { httpClient } = api({ mfa: true, limited: true });
+  const config = {
+    ominityBaseUrl: "https://tenant.ominity.test/api",
+    authClientId: "client",
+    authClientSecret: "secret",
+    authSessionSecret: SECRET,
+    sdkHttpClient: httpClient,
+  };
+
+  await createOminityAuthLoginRouteHandler(config)(post("/api/auth/login", { email: "jamie@example.com", password: "correct horse" }));
+
+  for (const [handler, path, body, code] of [
+    [createOminityAuthMfaValidateRouteHandler, "/api/auth/mfa/validate", { method: "authenticator", code: "123456" }, "MFA_RATE_LIMITED"],
+    [createOminityAuthRecoveryValidateRouteHandler, "/api/auth/mfa/recovery/validate", { code: "K7Q2M9XA" }, "MFA_RATE_LIMITED"],
+    [createOminityAuthMfaSendRouteHandler, "/api/auth/mfa/send", { method: "email" }, "MFA_SEND_RATE_LIMITED"],
+  ]) {
+    const response = await handler(config)(post(path, body));
+    assert.equal(response.status, 429, path);
+    assert.equal(response.headers.get("retry-after"), "540", path);
+    const payload = await response.json();
+    assert.equal(payload.code, code, path);
+    assert.equal(payload.details.retryAfter, 540, path);
+  }
+
+  assert.equal(await readOminityAuthSession(config, jar), null, "still pending");
 });

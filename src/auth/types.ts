@@ -280,6 +280,13 @@ export interface AuthListUserRecoveryCodesInput {
 export interface AuthRegenerateRecoveryCodesInput {
   readonly userId: AuthUserId;
   readonly confirm: boolean;
+  /**
+   * With a user access token and MFA on, new codes need proof: `method` and a current `code` of that enabled
+   * method, or an unused `recoveryCode`.
+   */
+  readonly method?: string;
+  readonly code?: string;
+  readonly recoveryCode?: string;
   readonly requestOptions?: RequestOptions;
 }
 
@@ -297,6 +304,15 @@ export interface AuthUserMfaMethodInput {
 
 export interface AuthValidateMfaInput extends AuthUserMfaMethodInput {
   readonly code: string;
+}
+
+export interface AuthDisableMfaInput extends AuthUserMfaMethodInput {
+  /**
+   * With a user access token, turning off a method that is on needs proof: a current `code` of this method (for
+   * email and SMS, send one first) or an unused `recoveryCode`.
+   */
+  readonly code?: string;
+  readonly recoveryCode?: string;
 }
 
 export interface AuthSendPasswordResetLinkInput {
@@ -327,7 +343,7 @@ export interface AuthClient {
   listUserMfaMethods(input: { userId: AuthUserId; requestOptions?: RequestOptions }): Promise<AuthPaginatedResult<AuthMfaMethod>>;
   getUserMfaMethod(input: AuthUserMfaMethodInput): Promise<AuthMfaMethod>;
   enableUserMfaMethod(input: AuthUserMfaMethodInput): Promise<AuthMfaMethod>;
-  disableUserMfaMethod(input: AuthUserMfaMethodInput): Promise<AuthStatusResult>;
+  disableUserMfaMethod(input: AuthDisableMfaInput): Promise<AuthStatusResult>;
   sendUserMfaCode(input: AuthUserMfaMethodInput): Promise<AuthStatusResult>;
   validateUserMfaCode(input: AuthValidateMfaInput): Promise<AuthStatusResult>;
   listUserRecoveryCodes(input: AuthListUserRecoveryCodesInput): Promise<AuthPaginatedResult<AuthRecoveryCode>>;
