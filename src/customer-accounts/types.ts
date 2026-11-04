@@ -253,6 +253,11 @@ export interface CustomerAccountsClient {
     customerId: number,
     options?: CustomerAccountsRequestOptions,
   ): Promise<CustomerAccountContext>;
+  /** Creates a customer account owned by the user (self-service) and makes it the active one. */
+  createCustomer(
+    input: CreateCustomerAccountInput,
+    options?: CustomerAccountsRequestOptions,
+  ): Promise<CustomerAccountContext>;
   listMembers(
     input?: CustomerMemberListOptions,
     options?: CustomerAccountsRequestOptions,
@@ -307,8 +312,15 @@ export interface CustomerAccountTeamSnapshot {
   readonly permissionCatalog: CustomerUserPermissionCatalog | null;
 }
 
+/** Self-service customer account: `name` is required for a business account (the default). */
+export interface CreateCustomerAccountInput {
+  readonly name?: string;
+  readonly type?: "business" | "private";
+}
+
 export type CustomerAccountMutation =
   | "switch"
+  | "create-customer"
   | "invite"
   | "accept-invitation"
   | `member:${number}:role`

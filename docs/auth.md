@@ -45,7 +45,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
 
 `authSessionSecret` must be at least 32 characters; production refuses to start without one. Other auth options:
 `authScope`, `authCookieName`, `authCookieMaxAgeSeconds`, `channelId`, `resolveLanguage`, `loginActivityEnabled`,
-`onLoginActivityError` and `debugEnabled`. `auth.socialLoginSuccessPath`, `auth.socialLoginFailurePath` and
+`onLoginActivityError`, `debugEnabled` and `emailCodePath` (the page emailed codes link to, default `/auth/verify`). `auth.socialLoginSuccessPath`, `auth.socialLoginFailurePath` and
 `auth.socialLoginMfaPath` (defaults `/`, `/login` and the success path) may be functions, evaluated per request, e.g. to follow the channel's default locale. Pass
 `auth: false` to switch the routes off.
 
@@ -55,6 +55,7 @@ The routes below `/api/auth`:
 | --- | --- | --- |
 | `POST` | `login` | Password sign-in |
 | `POST` | `register` | Create a user and sign in |
+| `POST` | `email-code/send`, `email-code/verify` | Email-first signup and passwordless sign-in |
 | `POST` | `logout` | Clear the session |
 | `GET` | `me` | Current `OminityAuthState` |
 | `POST` | `refresh` | Refresh the OAuth tokens in the session |
@@ -74,7 +75,7 @@ type OminityAuthState =
   | { status: "authenticated"; user: User; expiresAt: string };
 ```
 
-`signIn`, `register`, `verifyMfa`, `verifyRecoveryCode` and `refresh` resolve to this state. `useAuth().status` is
+`signIn`, `register`, `verifyEmailCode`, `verifyMfa`, `verifyRecoveryCode` and `refresh` resolve to this state. `useAuth().status` is
 `"loading"` until the first `me` request completes.
 
 ## `useAuth`
@@ -87,6 +88,8 @@ type OminityAuthState =
 | `pending`, `error` | Any auth request in flight; the last failure as `OminityActionError` |
 | `signIn({ email, password })` | Password sign-in |
 | `register({ firstName, email, password, lastName? })` | Create the user and sign in |
+| `sendEmailCode(email)` | Email a 6-digit sign-in or signup code; resolves to `{ expiresAt, resendAvailableAt }` |
+| `verifyEmailCode({ email, code })` | Sign in with the code; a signup code creates the user |
 | `signOut()` | End the session |
 | `sendMfaCode(method)` | Send a code for `email` or `sms` |
 | `verifyMfa(method, code)`, `verifyRecoveryCode(code)` | Complete a pending sign-in |
@@ -144,6 +147,26 @@ if (auth.status === "mfa_required") {
 
 A social sign-in that still needs the second factor redirects to `auth.socialLoginMfaPath` (falling back to the
 success path) with `socialLogin=mfa_required`.
+
+## Email codes (signup and passwordless sign-in)
+
+```ts
+await auth.sendEmailCode(email);
+// On the next screen, or on `emailCodePath` with `#email=…&code=…` from the email's link:
+const state = await auth.verifyEmailCode({ email, code });
+```
+
+`sendEmailCode` answers the same whether or not the email has an account: Ominity emails a sign-in code to existing
+users and a signup code to anyone else (`POST /v1/users/email-codes`, with the API key). A signup code creates the user
+with a verified email and no password, and empty names. The email's link always points to `emailCodePath` on
+`siteUrl`; a link from the request is never used. Codes expire after 15 minutes and allow five attempts.
+
+Requirements in Ominity: the `user_signup_code` and `user_login_code` email templates (Settings → Notifications) and
+the `email_code` grant on the auth client (added to user password clients by default). A user with MFA still gets
+`mfa_required`.
+
+The link carries the code in the URL fragment, so the verify page reads it with JavaScript and should not submit on
+load: mail scanners open links. Fill the code in and let the user confirm.
 
 ## Password reset
 

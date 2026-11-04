@@ -38,6 +38,13 @@ export interface OminityAuthContextValue {
   readonly error: OminityActionError | null;
   signIn(input: { readonly email: string; readonly password: string }): Promise<OminityAuthState>;
   register(input: Pick<UserCreateInput, "firstName" | "email" | "password"> & Partial<Pick<UserCreateInput, "lastName">>): Promise<OminityAuthState>;
+  /**
+   * Emails a 6-digit code: a sign-in code when the email has an account, a signup code otherwise (the answer is the
+   * same). The email links to the site's `emailCodePath` with `#email=…&code=…`.
+   */
+  sendEmailCode(email: string): Promise<{ readonly expiresAt: string; readonly resendAvailableAt: string }>;
+  /** Signs in with an emailed code; a signup code creates the user (verified email, no password). */
+  verifyEmailCode(input: { readonly email: string; readonly code: string }): Promise<OminityAuthState>;
   signOut(): Promise<void>;
   sendMfaCode(method: string): Promise<void>;
   verifyMfa(method: string, code: string): Promise<OminityAuthState>;
@@ -113,6 +120,8 @@ export function OminityAuthStateProvider({ children, options = {} }: { readonly 
     error,
     signIn: (input) => run(() => requestRoute<OminityAuthState>(`${base}/login`, jsonBody(input))).then(apply),
     register: (input) => run(() => requestRoute<OminityAuthState>(`${base}/register`, jsonBody(input))).then(apply),
+    sendEmailCode: (email) => run(() => requestRoute<{ expiresAt: string; resendAvailableAt: string }>(`${base}/email-code/send`, jsonBody({ email }))),
+    verifyEmailCode: (input) => run(() => requestRoute<OminityAuthState>(`${base}/email-code/verify`, jsonBody(input))).then(apply),
     signOut: () => run(async () => {
       await requestRoute(`${base}/logout`, { method: "POST" });
       apply({ status: "anonymous" });

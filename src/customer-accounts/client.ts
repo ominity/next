@@ -381,6 +381,16 @@ export function createCustomerAccountsClient(
       return request<CustomerAccountContext>("", {}, requestOptions);
     },
 
+    createCustomer(input, requestOptions) {
+      return request<CustomerAccountContext>("/accounts", {
+        method: "POST",
+        body: JSON.stringify({
+          ...(typeof input.name === "string" ? { name: input.name.trim() } : {}),
+          ...(input.type ? { type: input.type } : {}),
+        }),
+      }, requestOptions);
+    },
+
     switchCustomer(customerId, requestOptions) {
       return request<CustomerAccountContext>("/switch", {
         method: "POST",

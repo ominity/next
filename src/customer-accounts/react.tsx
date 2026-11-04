@@ -33,6 +33,7 @@ import {
   hasCustomerPermission,
 } from "./permissions.js";
 import type {
+  CreateCustomerAccountInput,
   CreateCustomerInvitationInput,
   CustomerAccountContext,
   CustomerAccountMutation,
@@ -120,6 +121,8 @@ export interface OminityCustomerAccountsContextValue {
   clearError(): void;
   refreshContext(): Promise<CustomerAccountContext>;
   switchCustomer(customerId: number): Promise<CustomerAccountContext>;
+  /** Creates a customer account owned by the user (when the channel allows self-service accounts) and switches to it. */
+  createCustomer(input: CreateCustomerAccountInput): Promise<CustomerAccountContext>;
   refreshTeam(): Promise<CustomerAccountTeamSnapshot>;
   loadMembers(input?: CustomerMemberListOptions): Promise<Paginated<CustomerUser>>;
   loadInvitations(
@@ -345,6 +348,10 @@ export function OminityCustomerAccountsProvider(props: OminityCustomerAccountsPr
 
   const switchCustomer = useCallback((customerId: number) => runContextRequest(
     (signal) => client.switchCustomer(customerId, { signal }),
+  ), [client, runContextRequest]);
+
+  const createCustomer = useCallback((input: CreateCustomerAccountInput) => runContextRequest(
+    (signal) => client.createCustomer(input, { signal }),
   ), [client, runContextRequest]);
 
   useEffect(() => {
@@ -707,6 +714,7 @@ export function OminityCustomerAccountsProvider(props: OminityCustomerAccountsPr
     clearError,
     refreshContext,
     switchCustomer,
+    createCustomer,
     refreshTeam,
     loadMembers,
     loadInvitations,
@@ -738,6 +746,7 @@ export function OminityCustomerAccountsProvider(props: OminityCustomerAccountsPr
     clearError,
     refreshContext,
     switchCustomer,
+    createCustomer,
     refreshTeam,
     loadMembers,
     loadInvitations,

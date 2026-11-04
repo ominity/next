@@ -39,6 +39,7 @@ The routes below `/api/customer-accounts`:
 | --- | --- | --- |
 | `GET` | `/` | Memberships and the active account |
 | `POST` | `switch` | Switch the active account |
+| `POST` | `accounts` | Create a customer account owned by the user (`{ name, type? }`) and switch to it |
 | `GET` | `members`, `roles`, `permissions` | Team members, assignable roles, translated permission metadata |
 | `PATCH/DELETE` | `members/{userId}` | Assign a role, remove a member |
 | `GET/POST` | `invitations` | List or create (and email) invitations |
@@ -57,6 +58,7 @@ SDK instead.
 | `memberships` | Every `CustomerUser` of the user |
 | `membership`, `customer`, `customerId` | The active membership, its `Customer` and id |
 | `switchTo(customerId)`, `refresh()` | |
+| `create({ name, type? })` | Create a customer account owned by the user and switch to it. Needs the channel's self-service accounts setting and a verified email; one account unless the channel allows multiple |
 | `can(permission)`, `canAll(required)`, `canAny(required)` | Permission checks on the active membership |
 
 ```tsx

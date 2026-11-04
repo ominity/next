@@ -1,8 +1,10 @@
 import { Ominity, type OminityOptions } from "@ominity/api-typescript";
+import { serverURLFromOptions } from "@ominity/api-typescript/lib/config.js";
 import type { CustomerUser } from "@ominity/api-typescript/models/commerce/customer-user";
 import {
   createOminityUserAccessSdk,
   requireOminityAuthenticatedUserContext,
+  resolveOminityUserSdkOptions,
   type OminityAuthRouteHandlerConfig,
   type OminityAuthenticatedUserContext,
 } from "../../auth/server/route-handlers.js";
@@ -522,6 +524,50 @@ export function createOminityCustomerAccountsRouteHandlers(
           customerId: active.customerId,
           membership: active.membership,
         }) ?? jsonError(404, "NOT_FOUND", "Customer account route not found.");
+      }
+
+      // Self-service customer account (Ominity `POST /v1/users/{id}/customers`), then switch to it.
+      if (segments.length === 1 && segments[0] === "accounts") {
+        const record = await requestRecord(request);
+        if (record instanceof Response) {
+          return record;
+        }
+        const type = record.type === "private" ? "private" : "business";
+        const name = asNonEmptyString(record.name)?.trim();
+        if (type === "business" && !name) {
+          return jsonError(400, "INVALID_NAME", "A company name is required.");
+        }
+
+        const options = resolveOminityUserSdkOptions(config, auth.context.session.accessToken, auth.context.language);
+        const base = serverURLFromOptions(options)?.toString().replace(/\/+$/, "") ?? "";
+        const outgoing = new Request(`${base}/users/${auth.context.userId}/customers`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            accept: "application/json",
+            authorization: `Bearer ${auth.context.session.accessToken}`,
+            ...(auth.context.language ? { "accept-language": auth.context.language } : {}),
+            ...(options.channelId ? { "x-channel-id": options.channelId } : {}),
+          },
+          body: JSON.stringify({ type, ...(name ? { name } : {}) }),
+        });
+        const response = options.httpClient ? await options.httpClient.request(outgoing) : await fetch(outgoing);
+        const body = await response.json().catch(() => null) as { customerId?: unknown; code?: unknown; message?: unknown; errors?: unknown } | null;
+
+        if (response.status !== 201) {
+          return noStore(jsonError(
+            response.status === 422 || response.status === 403 ? response.status : 502,
+            typeof body?.code === "string" ? body.code : "CUSTOMER_CREATE_FAILED",
+            typeof body?.message === "string" ? body.message : "The customer account could not be created.",
+            typeof body?.errors === "object" && body.errors !== null ? { fields: body.errors } : undefined,
+          ));
+        }
+
+        const customerId = positiveInteger(body?.customerId);
+        if (customerId) {
+          writeActiveCustomerId(auth.context.cookieStore, customerId, resolveActiveCustomerCookieOptions(config));
+        }
+        return noStoreJson(await loadCustomerContext(config, auth));
       }
 
       if (segments.length === 1 && segments[0] === "switch") {

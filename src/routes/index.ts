@@ -1,4 +1,6 @@
 import {
+  createOminityAuthEmailCodeSendRouteHandler,
+  createOminityAuthEmailCodeVerifyRouteHandler,
   createOminityAuthLoginActivityRouteHandlers,
   createOminityAuthLoginRouteHandler,
   createOminityAuthLogoutRouteHandler,
@@ -157,6 +159,8 @@ export function createOminityRouteHandlers(config: OminityRouteHandlersConfig): 
     exact.set("auth/me", { GET: createOminityAuthMeRouteHandler(config) });
     exact.set("auth/refresh", { POST: createOminityAuthRefreshRouteHandler(config) });
     exact.set("auth/register", { POST: createOminityAuthRegisterRouteHandler(config) });
+    exact.set("auth/email-code/send", { POST: createOminityAuthEmailCodeSendRouteHandler(config) });
+    exact.set("auth/email-code/verify", { POST: createOminityAuthEmailCodeVerifyRouteHandler(config) });
     exact.set("auth/password/forgot", { POST: createOminityAuthPasswordForgotRouteHandler(config) });
     exact.set("auth/password/reset", { POST: createOminityAuthPasswordResetRouteHandler(config) });
     exact.set("auth/mfa/methods", { GET: createOminityAuthMfaMethodsRouteHandler(config) });

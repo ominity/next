@@ -1,4 +1,5 @@
 import { Ominity, type OminityOptions } from "@ominity/api-typescript";
+import { serverURLFromOptions } from "@ominity/api-typescript/lib/config.js";
 import type { User } from "@ominity/api-typescript/models/identity/users/user";
 import type { UserMfaMethod } from "@ominity/api-typescript/models/identity/user-mfa-method";
 import type { SocialProvider } from "@ominity/api-typescript/models/settings/social-provider";
@@ -7,6 +8,7 @@ import type { SocialProviderUser } from "@ominity/api-typescript/models/settings
 import { createAuthClient } from "../client.js";
 import { normalizeOAuthTokenResponse } from "../normalize.js";
 import {
+  requestEmailCodeToken,
   requestPasswordGrantToken,
   requestRefreshToken,
 } from "../password-grant.js";
@@ -114,6 +116,11 @@ export interface OminityAuthRouteHandlerConfig {
   readonly sdkHttpClient?: OminityOptions["httpClient"] | undefined;
   readonly siteUrl?: string | undefined;
   readonly resolveLanguage?: OminityRequestLanguageResolver | undefined;
+  /**
+   * The page an emailed sign-in or signup code links to (relative to the site origin). The email and code are added
+   * as a URL fragment (`#email=…&code=…`) for the page to fill in. Defaults to `/auth/verify`.
+   */
+  readonly emailCodePath?: string | undefined;
 }
 
 export interface OminityAuthLoginActivityRouteHandlerConfig
@@ -500,6 +507,15 @@ async function loadUserFromAccessToken(
  * Creates a server-only SDK client authenticated as the current customer user.
  * The access token must come from the encrypted auth session, never browser input.
  */
+/** The SDK options for requests as the signed-in user (server only), e.g. for a request the SDK has no method for. */
+export function resolveOminityUserSdkOptions(
+  config: OminityAuthRouteHandlerConfig,
+  accessToken: string,
+  language?: string,
+): OminityOptions {
+  return resolveAuthSdkOptions(config, accessToken, language);
+}
+
 export function createOminityUserAccessSdk(
   config: OminityAuthRouteHandlerConfig,
   accessToken: string,
@@ -1211,6 +1227,127 @@ export function createOminityAuthLoginRouteHandler(
       );
     }
   };
+}
+
+/**
+ * `POST {email}`: emails a 6-digit code (Ominity `POST /v1/users/email-codes`, with the API key). An email with an
+ * account gets a sign-in code, any other a signup code; the answer is the same either way. The link in the email goes to
+ * `emailCodePath` on this site; a link from the request body is never used (the email must not point elsewhere).
+ */
+export function createOminityAuthEmailCodeSendRouteHandler(
+  config: OminityAuthRouteHandlerConfig,
+): (request: Request) => Promise<Response> {
+  const getLanguage = createRequestLanguageResolver(config.resolveLanguage);
+
+  return async (request: Request): Promise<Response> => {
+    let payload: unknown;
+    try {
+      payload = await parseJsonBody(request);
+    } catch {
+      return jsonError(400, "INVALID_JSON", "Request body must be valid JSON.");
+    }
+
+    const email = asNonEmptyString(asObjectRecord(payload)?.email)?.toLowerCase() ?? "";
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return jsonError(400, "INVALID_EMAIL", "A valid email is required.");
+    }
+
+    const path = asNonEmptyString(config.emailCodePath) ?? "/auth/verify";
+    const ipAddress = resolveRequestClientIp(request);
+    const userAgent = request.headers.get("user-agent");
+
+    try {
+      const language = await getLanguage(request);
+      const options = resolveApiKeySdkOptions(config, language);
+      const base = serverURLFromOptions(options)?.toString().replace(/\/+$/, "") ?? "";
+      const outgoing = new Request(`${base}/users/email-codes`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json",
+          authorization: `Bearer ${String(options.security && "apiKey" in options.security ? options.security.apiKey : "")}`,
+          ...(language ? { "accept-language": language } : {}),
+          ...(options.channelId ? { "x-channel-id": options.channelId } : {}),
+        },
+        body: JSON.stringify({
+          email,
+          redirectUrl: `${siteOrigin(config, request)}${path.startsWith("/") ? path : `/${path}`}`,
+          ...(language ? { language } : {}),
+          ...(ipAddress ? { ipAddress } : {}),
+          ...(userAgent ? { userAgent } : {}),
+        }),
+      });
+      const response = options.httpClient ? await options.httpClient.request(outgoing) : await fetch(outgoing);
+
+      if (response.status !== 202) {
+        throw Object.assign(new Error(`Ominity answered ${response.status}.`), { status: response.status });
+      }
+
+      const result = (await response.json()) as { expiresAt?: string; resendAvailableAt?: string };
+      return Response.json({ ok: true, expiresAt: result.expiresAt, resendAvailableAt: result.resendAvailableAt });
+    } catch (error) {
+      const status = statusOf(error);
+      return jsonError(
+        status === 429 ? 429 : status === 422 ? 422 : 502,
+        status === 429 ? "EMAIL_CODE_RATE_LIMITED" : "EMAIL_CODE_FAILED",
+        status === 429 ? "Too many codes were requested. Try again later." : "The code could not be sent.",
+        { message: error instanceof Error ? error.message : "Unknown error" },
+      );
+    }
+  };
+}
+
+/**
+ * `POST {email, code}`: exchanges an emailed code for a session (`grant_type=email_code`). A signup code creates the
+ * user (verified email, no password). Answers like the login route: the auth state, or `mfa_required`.
+ */
+export function createOminityAuthEmailCodeVerifyRouteHandler(
+  config: OminityAuthRouteHandlerConfig,
+): (request: Request) => Promise<Response> {
+  const getLanguage = createRequestLanguageResolver(config.resolveLanguage);
+
+  return async (request: Request): Promise<Response> => {
+    let payload: unknown;
+    try {
+      payload = await parseJsonBody(request);
+    } catch {
+      return jsonError(400, "INVALID_JSON", "Request body must be valid JSON.");
+    }
+
+    const record = asObjectRecord(payload);
+    const email = asNonEmptyString(record?.email)?.toLowerCase() ?? "";
+    const code = (asNonEmptyString(record?.code) ?? "").replace(/\D/g, "");
+    if (email.length === 0 || code.length !== 6) {
+      return jsonError(400, "INVALID_CODE", "Enter the 6-digit code from the email.");
+    }
+
+    const cookieStore = await loadNextCookiesStore();
+
+    try {
+      const language = await getLanguage(request);
+      const tokenConfig = resolveTokenConfig(config);
+      const token = await requestEmailCodeToken({
+        sdk: resolveAuthSdkOptions(config, undefined, language),
+        email,
+        code,
+        clientId: tokenConfig.clientId,
+        clientSecret: tokenConfig.clientSecret,
+        ...(typeof tokenConfig.scope === "string" ? { scope: tokenConfig.scope } : {}),
+      });
+
+      return Response.json(await startRouteSession(config, { cookieStore, token, request, language }));
+    } catch (error) {
+      return jsonError(401, "INVALID_CODE", "The code is wrong or has expired.", {
+        message: error instanceof Error ? error.message : "Unknown error",
+      });
+    }
+  };
+}
+
+function statusOf(error: unknown): number | null {
+  const status = (error as { statusCode?: unknown; status?: unknown } | null)?.statusCode
+    ?? (error as { status?: unknown } | null)?.status;
+  return typeof status === "number" ? status : null;
 }
 
 export function createOminityAuthLogoutRouteHandler(

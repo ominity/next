@@ -1,5 +1,6 @@
 import { createAuthClient } from "./client.js";
 import type {
+  EmailCodeGrantRequestInput,
   OAuthTokenResponse,
   PasswordGrantRequestInput,
   RefreshTokenRequestInput,
@@ -14,6 +15,22 @@ export async function requestPasswordGrantToken(input: PasswordGrantRequestInput
   return client.issuePasswordToken({
     username: input.username,
     password: input.password,
+    clientId: input.clientId,
+    clientSecret: input.clientSecret,
+    ...(typeof input.scope === "string" ? { scope: input.scope } : {}),
+    ...(input.requestOptions ? { requestOptions: input.requestOptions } : {}),
+  });
+}
+
+export async function requestEmailCodeToken(input: EmailCodeGrantRequestInput): Promise<OAuthTokenResponse> {
+  const client = createAuthClient({
+    sdk: input.sdk,
+  });
+
+  return client.issueToken({
+    grantType: "email_code",
+    email: input.email,
+    code: input.code,
     clientId: input.clientId,
     clientSecret: input.clientSecret,
     ...(typeof input.scope === "string" ? { scope: input.scope } : {}),

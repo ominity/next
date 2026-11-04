@@ -21,6 +21,8 @@ export function useCustomer() {
     customerId: accounts.activeCustomerId,
     switchTo: accounts.switchCustomer,
     refresh: accounts.refreshContext,
+    /** Creates a customer account owned by the user (when the channel allows self-service accounts) and switches to it. */
+    create: accounts.createCustomer,
     can: accounts.can,
     canAll: accounts.canAll,
     canAny: accounts.canAny,

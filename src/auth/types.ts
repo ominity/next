@@ -56,6 +56,8 @@ export interface AuthOAuthTokenInput {
   readonly clientSecret: string;
   readonly username?: string;
   readonly password?: string;
+  /** `email_code` grant: the email the code was sent to. */
+  readonly email?: string;
   readonly scope?: string;
   readonly refreshToken?: string;
   readonly code?: string;
@@ -68,6 +70,17 @@ export interface PasswordGrantRequestInput {
   readonly sdk: OminityOptions;
   readonly username: string;
   readonly password: string;
+  readonly clientId: string;
+  readonly clientSecret: string;
+  readonly scope?: string;
+  readonly requestOptions?: RequestOptions;
+}
+
+/** `grant_type=email_code`: signs in (or finishes signing up) with a code from `POST /v1/users/email-codes`. */
+export interface EmailCodeGrantRequestInput {
+  readonly sdk: OminityOptions;
+  readonly email: string;
+  readonly code: string;
   readonly clientId: string;
   readonly clientSecret: string;
   readonly scope?: string;

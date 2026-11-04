@@ -98,6 +98,7 @@ function toOAuthIssueRequest(input: AuthIssueTokenInput): {
   client_secret: string;
   username?: string;
   password?: string;
+  email?: string;
   scope?: string;
   refresh_token?: string;
   code?: string;
@@ -114,6 +115,7 @@ function toOAuthIssueRequest(input: AuthIssueTokenInput): {
     client_secret: clientSecret,
     ...(typeof input.username === "string" ? { username: input.username } : {}),
     ...(typeof input.password === "string" ? { password: input.password } : {}),
+    ...(typeof input.email === "string" ? { email: input.email } : {}),
     ...(typeof input.scope === "string" ? { scope: input.scope } : {}),
     ...(typeof input.refreshToken === "string" ? { refresh_token: input.refreshToken } : {}),
     ...(typeof input.code === "string" ? { code: input.code } : {}),
