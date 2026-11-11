@@ -35,9 +35,22 @@ export interface OminityAuthContextValue {
   readonly expiresAt: string | null;
   /** The methods that can complete a pending sign-in. */
   readonly mfaMethods: ReadonlyArray<UserMfaMethod>;
+  /**
+   * After a password sign-up, or a password sign-in of an account that hasn't verified its email: where the code went
+   * and when another can be sent, until `verifyEmailCode` signs in (`status` is `verification_required`).
+   */
+  readonly verification: {
+    readonly email: string;
+    readonly expiresAt: string | null;
+    readonly resendAvailableAt: string | null;
+  } | null;
   readonly pending: boolean;
   readonly error: OminityActionError | null;
   signIn(input: { readonly email: string; readonly password: string }): Promise<OminityAuthState>;
+  /**
+   * Creates the account. By default it has to verify its email first (`verification_required`: Ominity emailed a
+   * sign-up code, `verifyEmailCode` signs in); with `verifyEmailOnRegister: false` on the server it signs in at once.
+   */
   register(input: Pick<UserCreateInput, "firstName" | "email" | "password"> & Partial<Pick<UserCreateInput, "lastName">>): Promise<OminityAuthState>;
   /**
    * Emails a 6-digit code: a sign-in code when the email has an account, a signup code otherwise (the answer is the
@@ -165,11 +178,20 @@ export function OminityAuthStateProvider({ children, options = {} }: { readonly 
     user: state?.status === "authenticated" ? state.user : null,
     expiresAt: state?.status === "authenticated" ? state.expiresAt : null,
     mfaMethods: state?.status === "mfa_required" ? state.methods : [],
+    verification: state?.status === "verification_required"
+      ? { email: state.email, expiresAt: state.expiresAt, resendAvailableAt: state.resendAvailableAt }
+      : null,
     pending: pending > 0,
     error,
     signIn: (input) => run(() => requestRoute<OminityAuthState>(`${base}/login`, jsonBody(input))).then(apply),
     register: (input) => run(() => requestRoute<OminityAuthState>(`${base}/register`, jsonBody(input))).then(apply),
-    sendEmailCode: (email) => run(() => requestRoute<{ expiresAt: string; resendAvailableAt: string }>(`${base}/email-code/send`, jsonBody({ email }))),
+    sendEmailCode: (email) => run(() => requestRoute<{ expiresAt: string; resendAvailableAt: string }>(`${base}/email-code/send`, jsonBody({ email }))).then((sent) => {
+      // A pending verification follows the newest code.
+      setState((current) => current?.status === "verification_required" && current.email === email.trim().toLowerCase()
+        ? { ...current, expiresAt: sent.expiresAt, resendAvailableAt: sent.resendAvailableAt }
+        : current);
+      return sent;
+    }),
     verifyEmailCode: (input) => run(() => requestRoute<OminityAuthState>(`${base}/email-code/verify`, jsonBody(input))).then(apply),
     checkPasskeys: (email) => run(async () => {
       const normalized = email.trim().toLowerCase();

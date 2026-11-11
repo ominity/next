@@ -1,5 +1,6 @@
 export * from "./provider.js";
 export * from "./auth.js";
+export * from "./resend-countdown.js";
 export * from "./user.js";
 export * from "./passkeys.js";
 export * from "./customer.js";

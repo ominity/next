@@ -1,5 +1,6 @@
 import { Ominity, type OminityOptions } from "@ominity/api-typescript";
 import type { User } from "@ominity/api-typescript/models/identity/users/user";
+import type { UserCreateInput } from "@ominity/api-typescript/models/operations";
 import type { UserMfaMethod } from "@ominity/api-typescript/models/identity/user-mfa-method";
 import type { SocialProvider } from "@ominity/api-typescript/models/settings/social-provider";
 import type { SocialProviderUser } from "@ominity/api-typescript/models/settings/social-provider-user";
@@ -66,6 +67,16 @@ export interface OminityAuthRouteSession extends AuthSession {
 export type OminityAuthState =
   | { readonly status: "anonymous" }
   | { readonly status: "mfa_required"; readonly methods: ReadonlyArray<UserMfaMethod> }
+  /**
+   * A password sign-up (or a password sign-in of one) that still has to verify its email: a 6-digit code was emailed
+   * (`verifyEmailCode` finishes it and signs in). `resendAvailableAt` is when `sendEmailCode` can send another.
+   */
+  | {
+      readonly status: "verification_required";
+      readonly email: string;
+      readonly expiresAt: string | null;
+      readonly resendAvailableAt: string | null;
+    }
   | { readonly status: "authenticated"; readonly user: User; readonly expiresAt: string };
 
 /**
@@ -122,6 +133,12 @@ export interface OminityAuthRouteHandlerConfig {
    * as a URL fragment (`#email=…&code=…`) for the page to fill in. Defaults to `/auth/verify`.
    */
   readonly emailCodePath?: string | undefined;
+  /**
+   * Whether a password sign-up verifies its email first (default `true`): Ominity emails a sign-up code and the
+   * account can't sign in with its password until the code is entered (`verification_required`). Set `false` only
+   * where sign-ups can't come from bots.
+   */
+  readonly verifyEmailOnRegister?: boolean | undefined;
 }
 
 export interface OminityAuthLoginActivityRouteHandlerConfig
@@ -1220,6 +1237,12 @@ export function createOminityAuthLoginRouteHandler(
 
       return Response.json(await startRouteSession(config, { cookieStore, token, request, language }));
     } catch (error) {
+      // The right password of a sign-up that hasn't verified its email yet (Ominity says so only after the right
+      // password): send a code and continue with it.
+      if (apiErrorCodeOf(error) === "email_not_verified") {
+        return Response.json(await startEmailVerification(config, request, email));
+      }
+
       return jsonError(
         401,
         "LOGIN_FAILED",
@@ -1230,6 +1253,70 @@ export function createOminityAuthLoginRouteHandler(
       );
     }
   };
+}
+
+/**
+ * Emails a sign-up code to an account that has to verify its email, and the state that asks for it. When no code can be
+ * sent right now (the wait between codes), the state still asks for the code sent before.
+ */
+async function startEmailVerification(
+  config: OminityAuthRouteHandlerConfig,
+  request: Request,
+  email: string,
+): Promise<OminityAuthState> {
+  try {
+    const result = await sendEmailCodeFor(config, request, email);
+    return { status: "verification_required", email, expiresAt: result.expiresAt, resendAvailableAt: result.resendAvailableAt };
+  } catch {
+    return { status: "verification_required", email, expiresAt: null, resendAvailableAt: null };
+  }
+}
+
+async function sendEmailCodeFor(
+  config: OminityAuthRouteHandlerConfig,
+  request: Request,
+  email: string,
+): Promise<{ readonly expiresAt: string; readonly resendAvailableAt: string }> {
+  const language = await createRequestLanguageResolver(config.resolveLanguage)(request);
+  const ipAddress = resolveRequestClientIp(request);
+  const userAgent = request.headers.get("user-agent");
+
+  return createOminityApiKeySdk(config, language).users.sendEmailCode({
+    email,
+    redirectUrl: emailCodeUrl(config, request),
+    ...(language ? { language } : {}),
+    ...(ipAddress ? { ipAddress } : {}),
+    ...(userAgent ? { userAgent } : {}),
+  });
+}
+
+/** Where an emailed code links to: `emailCodePath` on this site. */
+function emailCodeUrl(config: OminityAuthRouteHandlerConfig, request: Request): string {
+  const path = asNonEmptyString(config.emailCodePath) ?? "/auth/verify";
+  return `${siteOrigin(config, request)}${path.startsWith("/") ? path : `/${path}`}`;
+}
+
+/**
+ * The machine-readable error of an Ominity answer anywhere in the error's cause chain: the API's `code`
+ * (`signups.paused`), or the OAuth `error` (`email_not_verified`).
+ */
+function apiErrorCodeOf(error: unknown, depth = 0): string | null {
+  if (depth > 3 || typeof error !== "object" || error === null) return null;
+
+  const record = error as { readonly code?: unknown; readonly body?: unknown; readonly cause?: unknown };
+  if (typeof record.body === "string") {
+    try {
+      const body = JSON.parse(record.body) as { readonly code?: unknown; readonly error?: unknown };
+      const code = typeof body.code === "string" ? body.code : typeof body.error === "string" ? body.error : null;
+      if (code) return code;
+    } catch {
+      // Not JSON: look further down.
+    }
+  }
+
+  if (typeof record.code === "string" && record.code.includes(".")) return record.code;
+
+  return apiErrorCodeOf(record.cause, depth + 1);
 }
 
 /**
@@ -1255,26 +1342,20 @@ export function createOminityAuthEmailCodeSendRouteHandler(
       return jsonError(400, "INVALID_EMAIL", "A valid email is required.");
     }
 
-    const path = asNonEmptyString(config.emailCodePath) ?? "/auth/verify";
-    const ipAddress = resolveRequestClientIp(request);
-    const userAgent = request.headers.get("user-agent");
-
     try {
-      const language = await getLanguage(request);
-      const result = await createOminityApiKeySdk(config, language).users.sendEmailCode({
-        email,
-        redirectUrl: `${siteOrigin(config, request)}${path.startsWith("/") ? path : `/${path}`}`,
-        ...(language ? { language } : {}),
-        ...(ipAddress ? { ipAddress } : {}),
-        ...(userAgent ? { userAgent } : {}),
-      });
+      const result = await sendEmailCodeFor(config, request, email);
       return Response.json({ ok: true, expiresAt: result.expiresAt, resendAvailableAt: result.resendAvailableAt });
     } catch (error) {
+      const limit = rateLimitOf(error);
+      if (limit) {
+        return rateLimitedResponse(limit, "EMAIL_CODE_RATE_LIMITED", "Too many codes were requested. Try again later.");
+      }
+
       const status = statusOf(error);
       return jsonError(
-        status === 429 ? 429 : status === 422 ? 422 : 502,
-        status === 429 ? "EMAIL_CODE_RATE_LIMITED" : "EMAIL_CODE_FAILED",
-        status === 429 ? "Too many codes were requested. Try again later." : "The code could not be sent.",
+        status === 422 ? 422 : 502,
+        "EMAIL_CODE_FAILED",
+        "The code could not be sent.",
         { message: error instanceof Error ? error.message : "Unknown error" },
       );
     }
@@ -1454,16 +1535,36 @@ export function createOminityAuthRegisterRouteHandler(
     }
 
     const cookieStore = await loadNextCookiesStore();
+    const verifyEmail = config.verifyEmailOnRegister !== false;
+    const ipAddress = resolveRequestClientIp(request);
+    const userAgent = request.headers.get("user-agent");
 
     try {
       const language = await getLanguage(request);
       const sdk = createOminityApiKeySdk(config, language);
-      await sdk.users.create({
+      // The sign-up fields beyond the SDK's input type pass through as they are (Ominity `POST /v1/users`).
+      const input: UserCreateInput & {
+        readonly verifyEmail: boolean;
+        readonly redirectUrl?: string;
+        readonly ipAddress?: string;
+        readonly userAgent?: string;
+      } = {
         firstName,
         ...(lastName.length > 0 ? { lastName } : {}),
         email,
         password,
-      });
+        ...(language ? { language } : {}),
+        verifyEmail,
+        ...(verifyEmail ? { redirectUrl: emailCodeUrl(config, request) } : {}),
+        ...(ipAddress ? { ipAddress } : {}),
+        ...(userAgent ? { userAgent } : {}),
+      };
+      await sdk.users.create(input);
+
+      // Ominity emailed a sign-up code: the account signs in once it is entered.
+      if (verifyEmail) {
+        return Response.json({ status: "verification_required", email, expiresAt: null, resendAvailableAt: null } satisfies OminityAuthState);
+      }
 
       try {
         const tokenConfig = resolveTokenConfig(config);
@@ -1481,6 +1582,13 @@ export function createOminityAuthRegisterRouteHandler(
         return Response.json({ status: "anonymous" } satisfies OminityAuthState);
       }
     } catch (error) {
+      const limit = rateLimitOf(error);
+      if (limit) {
+        return apiErrorCodeOf(error) === "signups.paused"
+          ? rateLimitedResponse(limit, "SIGNUPS_PAUSED", "Sign-ups are paused for a while. Try again later.")
+          : rateLimitedResponse(limit, "REGISTER_RATE_LIMITED", "Too many attempts. Try again later.");
+      }
+
       return jsonError(
         400,
         "REGISTER_FAILED",
@@ -1528,9 +1636,7 @@ export function createOminityAuthPasswordForgotRouteHandler(
         ...(typeof request.headers.get("user-agent") === "string"
           ? { userAgent: request.headers.get("user-agent") }
           : {}),
-        ...(typeof request.headers.get("x-forwarded-for") === "string"
-          ? { ipAddress: request.headers.get("x-forwarded-for") }
-          : {}),
+        ...(resolveRequestClientIp(request) ? { ipAddress: resolveRequestClientIp(request) } : {}),
       });
 
       return Response.json({
@@ -1539,6 +1645,11 @@ export function createOminityAuthPasswordForgotRouteHandler(
         ...(typeof result.expiresAt === "string" ? { expiresAt: result.expiresAt } : {}),
       });
     } catch (error) {
+      const limit = rateLimitOf(error);
+      if (limit) {
+        return rateLimitedResponse(limit, "PASSWORD_FORGOT_RATE_LIMITED", "Too many requests. Try again later.");
+      }
+
       return jsonError(502, "PASSWORD_FORGOT_FAILED", "Failed to request password reset.", {
         message: error instanceof Error ? error.message : "Unknown error",
       });
@@ -1586,9 +1697,7 @@ export function createOminityAuthPasswordResetRouteHandler(
         ...(typeof request.headers.get("user-agent") === "string"
           ? { userAgent: request.headers.get("user-agent") }
           : {}),
-        ...(typeof request.headers.get("x-forwarded-for") === "string"
-          ? { ipAddress: request.headers.get("x-forwarded-for") }
-          : {}),
+        ...(resolveRequestClientIp(request) ? { ipAddress: resolveRequestClientIp(request) } : {}),
       });
 
       return Response.json({
@@ -1622,10 +1731,10 @@ export function createOminityAuthMfaMethodsRouteHandler(
 }
 
 /**
- * Ominity limits two-factor codes per user (wrong codes, and codes sent): a 429 anywhere in the error's cause chain,
- * with the seconds to wait when Ominity says so.
+ * A rate limit of Ominity (two-factor codes per user, emails per visitor IP, paused sign-ups): a 429 anywhere in the
+ * error's cause chain, with the seconds to wait when Ominity says so.
  */
-function mfaRateLimitOf(error: unknown, depth = 0): { readonly retryAfter: number | null } | null {
+function rateLimitOf(error: unknown, depth = 0): { readonly retryAfter: number | null } | null {
   if (depth > 3 || typeof error !== "object" || error === null) return null;
 
   const record = error as {
@@ -1641,10 +1750,10 @@ function mfaRateLimitOf(error: unknown, depth = 0): { readonly retryAfter: numbe
     return { retryAfter: Number.isFinite(seconds) && seconds > 0 ? Math.ceil(seconds) : null };
   }
 
-  return mfaRateLimitOf(record.cause, depth + 1);
+  return rateLimitOf(record.cause, depth + 1);
 }
 
-function mfaRateLimitedResponse(limit: { readonly retryAfter: number | null }, code: string, error: string): Response {
+function rateLimitedResponse(limit: { readonly retryAfter: number | null }, code: string, error: string): Response {
   return jsonResponse(
     { error, code, ...(limit.retryAfter !== null ? { details: { retryAfter: limit.retryAfter } } : {}) },
     429,
@@ -1688,9 +1797,9 @@ export function createOminityAuthMfaSendRouteHandler(
         method,
       });
     } catch (error) {
-      const limit = mfaRateLimitOf(error);
+      const limit = rateLimitOf(error);
       if (limit) {
-        return mfaRateLimitedResponse(limit, "MFA_SEND_RATE_LIMITED", "Too many codes were sent. Try again later.");
+        return rateLimitedResponse(limit, "MFA_SEND_RATE_LIMITED", "Too many codes were sent. Try again later.");
       }
       return jsonError(502, "MFA_SEND_FAILED", "The code could not be sent.", {
         message: error instanceof Error ? error.message : "Unknown error",
@@ -1733,9 +1842,9 @@ export function createOminityAuthMfaValidateRouteHandler(
       userId: context.userId,
       method,
       code,
-    }).catch((error: unknown) => ({ success: false, limit: mfaRateLimitOf(error) }));
+    }).catch((error: unknown) => ({ success: false, limit: rateLimitOf(error) }));
     if (result.limit) {
-      return mfaRateLimitedResponse(result.limit, "MFA_RATE_LIMITED", "Too many wrong codes. Try again later.");
+      return rateLimitedResponse(result.limit, "MFA_RATE_LIMITED", "Too many wrong codes. Try again later.");
     }
     if (result.success !== true) {
       return jsonError(422, "INVALID_MFA_CODE", "The code is not valid.");
@@ -1777,9 +1886,9 @@ export function createOminityAuthRecoveryValidateRouteHandler(
     const result: { readonly success?: boolean; readonly limit?: { readonly retryAfter: number | null } | null } = await authClient.validateUserRecoveryCode({
       userId: context.userId,
       code,
-    }).catch((error: unknown) => ({ success: false, limit: mfaRateLimitOf(error) }));
+    }).catch((error: unknown) => ({ success: false, limit: rateLimitOf(error) }));
     if (result.limit) {
-      return mfaRateLimitedResponse(result.limit, "MFA_RATE_LIMITED", "Too many wrong codes. Try again later.");
+      return rateLimitedResponse(result.limit, "MFA_RATE_LIMITED", "Too many wrong codes. Try again later.");
     }
     if (result.success !== true) {
       return jsonError(422, "INVALID_RECOVERY_CODE", "The recovery code is not valid.");

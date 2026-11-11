@@ -45,7 +45,9 @@ export function Providers({ children }: { children: React.ReactNode }) {
 
 `authSessionSecret` must be at least 32 characters; production refuses to start without one. Other auth options:
 `authScope`, `authCookieName`, `authCookieMaxAgeSeconds`, `channelId`, `resolveLanguage`, `loginActivityEnabled`,
-`onLoginActivityError`, `debugEnabled` and `emailCodePath` (the page emailed codes link to, default `/auth/verify`). `auth.socialLoginSuccessPath`, `auth.socialLoginFailurePath` and
+`onLoginActivityError`, `debugEnabled`, `emailCodePath` (the page emailed codes link to, default `/auth/verify`) and
+`verifyEmailOnRegister` (default `true`: a password sign-up verifies its email with a code before it can sign in; set
+`false` only where sign-ups can't come from bots). `auth.socialLoginSuccessPath`, `auth.socialLoginFailurePath` and
 `auth.socialLoginMfaPath` (defaults `/`, `/login` and the success path) may be functions, evaluated per request, e.g. to follow the channel's default locale. Pass
 `auth: false` to switch the routes off.
 
@@ -54,7 +56,7 @@ The routes below `/api/auth`:
 | Method | Path | Behavior |
 | --- | --- | --- |
 | `POST` | `login` | Password sign-in |
-| `POST` | `register` | Create a user and sign in |
+| `POST` | `register` | Create a user; it verifies its email with a code (`verification_required`) |
 | `POST` | `email-code/send`, `email-code/verify` | Email-first signup and passwordless sign-in |
 | `POST` | `passkey/challenge`, `passkey/verify` | Passkey sign-in (email-first or discoverable) |
 | `POST` | `logout` | Clear the session |
@@ -68,6 +70,12 @@ Ominity limits two-factor codes per user: 5 wrong codes in 15 minutes or 20 a da
 together), and 5 codes sent in 15 minutes. Past that, `mfa/validate` and `mfa/recovery/validate` answer `429`
 `MFA_RATE_LIMITED`, and `mfa/send` answers `429` `MFA_SEND_RATE_LIMITED`, with `Retry-After` and
 `details.retryAfter` (seconds). A wrong code is still `422`.
+
+Every route that makes Ominity send an email (`register`, `email-code/send`, `password/forgot`) passes the visitor's IP
+(from the proxy headers), so each visitor has their own budget: a few requests free, then a growing wait, at most 20
+an hour. Past it they answer `429` with `Retry-After` and `details.retryAfter`: `REGISTER_RATE_LIMITED`,
+`EMAIL_CODE_RATE_LIMITED`, `PASSWORD_FORGOT_RATE_LIMITED`. When a channel gets too many sign-ups in an hour (bots),
+`register` answers `429` `SIGNUPS_PAUSED` for a while.
 | `POST` | `password/forgot`, `password/reset` | Password reset |
 | `GET` | `login-activity[/{id}]` | The user's sign-in history |
 | `GET` | `social`, `social/{providerId}/start`, `social/{providerId}/callback` | Social sign-in |
@@ -78,8 +86,12 @@ together), and 5 codes sent in 15 minutes. Past that, `mfa/validate` and `mfa/re
 type OminityAuthState =
   | { status: "anonymous" }
   | { status: "mfa_required"; methods: ReadonlyArray<UserMfaMethod> }
+  | { status: "verification_required"; email: string; expiresAt: string | null; resendAvailableAt: string | null }
   | { status: "authenticated"; user: User; expiresAt: string };
 ```
+
+`verification_required` follows a password sign-up, and a password sign-in of an account that hasn't entered its
+sign-up code yet (that sign-in emails a fresh code). Show the code step: `verifyEmailCode({ email, code })` signs in.
 
 `signIn`, `register`, `verifyEmailCode`, `signInWithPasskey`, `verifyMfa`, `verifyRecoveryCode` and `refresh` resolve to this state. `useAuth().status` is
 `"loading"` until the first `me` request completes.
@@ -91,9 +103,10 @@ type OminityAuthState =
 | `status`, `ready` | Auth status; `ready` once it is known |
 | `user`, `expiresAt` | The SDK `User` and session expiry when authenticated, otherwise `null` |
 | `mfaMethods` | Methods that can complete a pending sign-in |
+| `verification` | `{ email, expiresAt, resendAvailableAt }` while `verification_required`, otherwise `null` |
 | `pending`, `error` | Any auth request in flight; the last failure as `OminityActionError` |
 | `signIn({ email, password })` | Password sign-in |
-| `register({ firstName, email, password, lastName? })` | Create the user and sign in |
+| `register({ firstName, email, password, lastName? })` | Create the user; resolves to `verification_required` (or signs in with `verifyEmailOnRegister: false`) |
 | `sendEmailCode(email)` | Email a 6-digit sign-in or signup code; resolves to `{ expiresAt, resendAvailableAt }` |
 | `verifyEmailCode({ email, code })` | Sign in with the code; a signup code creates the user |
 | `checkPasskeys(email)` | Whether this email can sign in with a passkey here; resolves to `{ hasPasskeys }` |
@@ -175,6 +188,32 @@ the `email_code` grant on the auth client (added to user password clients by def
 
 The link carries the code in the URL fragment, so the verify page reads it with JavaScript and should not submit on
 load: mail scanners open links. Fill the code in and let the user confirm.
+
+The wait before another code grows with each one sent (a minute, a minute, two, five, ten, then fifteen; at most ten
+an hour), and the three newest codes all work, so several devices can sign in. Show the wait in words with
+`useResendCountdown`:
+
+```tsx
+const { canResend, label } = useResendCountdown(sent.resendAvailableAt);
+// canResend ? <button onClick={resend}>Send a new code</button> : <p>Send a new code in {label}</p>
+```
+
+`label` is localized with `Intl` ("45 seconds", "2 minutes"); `formatResendWait(seconds, locale)` does the same
+outside React.
+
+### Password sign-up
+
+```ts
+const state = await auth.register({ firstName, email, password });
+if (state.status === "verification_required") {
+  // Same code step as above: Ominity emailed a sign-up code.
+  await auth.verifyEmailCode({ email: state.email, code });
+}
+```
+
+Until the code is entered, the account can't sign in with its password (a password sign-in answers
+`verification_required` and emails a new code) and gets no welcome email; Ominity removes accounts that never verify
+within 7 days.
 
 ## Passkeys
 
