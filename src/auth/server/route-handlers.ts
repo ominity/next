@@ -1542,13 +1542,7 @@ export function createOminityAuthRegisterRouteHandler(
     try {
       const language = await getLanguage(request);
       const sdk = createOminityApiKeySdk(config, language);
-      // The sign-up fields beyond the SDK's input type pass through as they are (Ominity `POST /v1/users`).
-      const input: UserCreateInput & {
-        readonly verifyEmail: boolean;
-        readonly redirectUrl?: string;
-        readonly ipAddress?: string;
-        readonly userAgent?: string;
-      } = {
+      const input: UserCreateInput = {
         firstName,
         ...(lastName.length > 0 ? { lastName } : {}),
         email,
