@@ -24,16 +24,17 @@ function cookieJar() {
 
 function api({ mfa = false, codeStatus = 202 } = {}) {
   const requests = [];
-  const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/hal+json" } });
+  const json = (body, status = 200, type = "application/hal+json") => new Response(JSON.stringify(body), { status, headers: { "Content-Type": type } });
   const fetcher = async (input, init) => {
     const request = input instanceof Request ? input : new Request(input, init);
     const path = new URL(request.url).pathname;
     const body = request.method === "POST" ? await request.clone().text() : "";
     requests.push({ method: request.method, path, body, authorization: request.headers.get("authorization") });
     if (path === "/api/v1/users/email-codes") {
+      // Ominity answers this endpoint with plain JSON, not HAL.
       return codeStatus === 202
-        ? json({ expiresAt: "2026-11-04T10:15:00+00:00", resendAvailableAt: "2026-11-04T10:01:00+00:00" }, 202)
-        : json({ message: "Too many codes" }, codeStatus);
+        ? json({ expiresAt: "2026-11-04T10:15:00+00:00", resendAvailableAt: "2026-11-04T10:01:00+00:00" }, 202, "application/json")
+        : json({ status: codeStatus, title: "Too Many Requests", detail: "Too many codes were requested." }, codeStatus, "application/json");
     }
     if (request.method === "POST" && path.includes("oauth")) {
       return new URLSearchParams(body).get("code") === "123456" || body.includes("123456")

@@ -1,6 +1,7 @@
 export * from "./provider.js";
 export * from "./auth.js";
 export * from "./user.js";
+export * from "./passkeys.js";
 export * from "./customer.js";
 export * from "./cart.js";
 export * from "./checkout.js";

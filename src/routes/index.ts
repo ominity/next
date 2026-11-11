@@ -8,6 +8,8 @@ import {
   createOminityAuthMfaMethodsRouteHandler,
   createOminityAuthMfaSendRouteHandler,
   createOminityAuthMfaValidateRouteHandler,
+  createOminityAuthPasskeyChallengeRouteHandler,
+  createOminityAuthPasskeyVerifyRouteHandler,
   createOminityAuthPasswordForgotRouteHandler,
   createOminityAuthPasswordResetRouteHandler,
   createOminityAuthRecoveryValidateRouteHandler,
@@ -51,7 +53,7 @@ type MethodHandlers = Partial<Record<OminityRouteMethod, Handler>>;
  *
  * | Path (below `basePath`) | Feature |
  * |---|---|
- * | `auth/*` | sign-in, registration, MFA, password reset, session, login activity, social login |
+ * | `auth/*` | sign-in, registration, MFA, password reset, session, login activity, social login, passkey sign-in |
  * | `commerce/*` | cart, checkout, shipping and payment methods, order payments |
  * | `customer-accounts/*` | account context, switching, team and invitations |
  * | `ominity/*` | the browser SDK gateway |
@@ -161,6 +163,8 @@ export function createOminityRouteHandlers(config: OminityRouteHandlersConfig): 
     exact.set("auth/register", { POST: createOminityAuthRegisterRouteHandler(config) });
     exact.set("auth/email-code/send", { POST: createOminityAuthEmailCodeSendRouteHandler(config) });
     exact.set("auth/email-code/verify", { POST: createOminityAuthEmailCodeVerifyRouteHandler(config) });
+    exact.set("auth/passkey/challenge", { POST: createOminityAuthPasskeyChallengeRouteHandler(config) });
+    exact.set("auth/passkey/verify", { POST: createOminityAuthPasskeyVerifyRouteHandler(config) });
     exact.set("auth/password/forgot", { POST: createOminityAuthPasswordForgotRouteHandler(config) });
     exact.set("auth/password/reset", { POST: createOminityAuthPasswordResetRouteHandler(config) });
     exact.set("auth/mfa/methods", { GET: createOminityAuthMfaMethodsRouteHandler(config) });

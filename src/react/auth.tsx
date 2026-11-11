@@ -15,10 +15,11 @@ import {
   type ReactNode,
 } from "react";
 
-import type { OminityActionError } from "../actions/client.js";
+import { OminityActionError } from "../actions/client.js";
 import type { OminityAuthState } from "../auth/server/route-handlers.js";
 import { toOminitySdkError } from "../sdk/errors.js";
 import { jsonBody, requestRoute } from "./http.js";
+import { getPasskeyCredential, type OminityPasskeyOptionsJSON } from "./webauthn.js";
 
 export type { OminityAuthState };
 
@@ -45,6 +46,23 @@ export interface OminityAuthContextValue {
   sendEmailCode(email: string): Promise<{ readonly expiresAt: string; readonly resendAvailableAt: string }>;
   /** Signs in with an emailed code; a signup code creates the user (verified email, no password). */
   verifyEmailCode(input: { readonly email: string; readonly code: string }): Promise<OminityAuthState>;
+  /**
+   * Email-first sign-in: whether this email can sign in with a passkey on this site. An unknown email answers `false`
+   * too. When `true`, the challenge is kept, so `signInWithPasskey({ email })` opens the prompt without another call.
+   */
+  checkPasskeys(email: string): Promise<{ readonly hasPasskeys: boolean }>;
+  /**
+   * Signs in with a passkey: opens the browser's passkey prompt and finishes the sign-in (no MFA step; a passkey is
+   * two factors). With `email`, only that user's passkeys are offered; without, any passkey for this site. With
+   * `conditional`, the prompt is the email field's autofill (`autocomplete="username webauthn"`); call it once on
+   * page load and abort it with `signal` when the user signs in another way. Closing the prompt rejects with code
+   * `PASSKEY_CANCELLED` (not stored in `error`); an email without passkeys rejects with `NO_PASSKEYS`.
+   */
+  signInWithPasskey(input?: {
+    readonly email?: string | undefined;
+    readonly conditional?: boolean | undefined;
+    readonly signal?: AbortSignal | undefined;
+  }): Promise<OminityAuthState>;
   signOut(): Promise<void>;
   sendMfaCode(method: string): Promise<void>;
   verifyMfa(method: string, code: string): Promise<OminityAuthState>;
@@ -66,6 +84,20 @@ export interface OminityAuthOptions {
 }
 
 const AuthContext = createContext<OminityAuthContextValue | null>(null);
+
+interface PasskeyChallengeResponse {
+  readonly hasPasskeys?: boolean;
+  readonly challengeId?: string;
+  readonly expiresAt?: string;
+  readonly publicKey?: OminityPasskeyOptionsJSON;
+}
+
+interface PasskeyChallenge {
+  readonly email: string | undefined;
+  readonly challengeId: string;
+  readonly expiresAt: string;
+  readonly publicKey: OminityPasskeyOptionsJSON;
+}
 
 export function OminityAuthStateProvider({ children, options = {} }: { readonly children: ReactNode; readonly options?: OminityAuthOptions | undefined }) {
   const base = (options.basePath ?? "/api/auth").replace(/\/+$/, "");
@@ -96,6 +128,23 @@ export function OminityAuthStateProvider({ children, options = {} }: { readonly 
     }
   }, []);
 
+  // The challenge from the last `checkPasskeys`, for the sign-in that usually follows it.
+  const passkeyChallenge = useRef<PasskeyChallenge | null>(null);
+
+  const startPasskeySignIn = useCallback(async (email: string | undefined): Promise<PasskeyChallenge> => {
+    const kept = passkeyChallenge.current;
+    passkeyChallenge.current = null;
+    if (kept && kept.email === email && Date.parse(kept.expiresAt) - Date.now() > 10_000) {
+      return kept;
+    }
+
+    const started = await requestRoute<PasskeyChallengeResponse>(`${base}/passkey/challenge`, jsonBody(email ? { email } : {}));
+    if (!started.challengeId || !started.publicKey) {
+      throw new OminityActionError("There is no passkey for this email on this site.", 404, "NO_PASSKEYS");
+    }
+    return { email, challengeId: started.challengeId, publicKey: started.publicKey, expiresAt: started.expiresAt ?? "" };
+  }, [base]);
+
   const apply = useCallback((next: OminityAuthState) => {
     if (mounted.current) setState(next);
     return next;
@@ -122,6 +171,21 @@ export function OminityAuthStateProvider({ children, options = {} }: { readonly 
     register: (input) => run(() => requestRoute<OminityAuthState>(`${base}/register`, jsonBody(input))).then(apply),
     sendEmailCode: (email) => run(() => requestRoute<{ expiresAt: string; resendAvailableAt: string }>(`${base}/email-code/send`, jsonBody({ email }))),
     verifyEmailCode: (input) => run(() => requestRoute<OminityAuthState>(`${base}/email-code/verify`, jsonBody(input))).then(apply),
+    checkPasskeys: (email) => run(async () => {
+      const normalized = email.trim().toLowerCase();
+      const started = await requestRoute<PasskeyChallengeResponse>(`${base}/passkey/challenge`, jsonBody({ email: normalized }));
+      passkeyChallenge.current = started.hasPasskeys && started.challengeId && started.publicKey
+        ? { email: normalized, challengeId: started.challengeId, publicKey: started.publicKey, expiresAt: started.expiresAt ?? "" }
+        : null;
+      return { hasPasskeys: started.hasPasskeys === true };
+    }),
+    signInWithPasskey: async (input = {}) => {
+      const email = input.email?.trim().toLowerCase() || undefined;
+      // Autofill waits for the user for as long as the page is open: it doesn't count as pending.
+      const start = input.conditional ? await startPasskeySignIn(email) : await run(() => startPasskeySignIn(email));
+      const credential = await getPasskeyCredential(start.publicKey, { conditional: input.conditional, signal: input.signal });
+      return run(() => requestRoute<OminityAuthState>(`${base}/passkey/verify`, jsonBody({ challengeId: start.challengeId, credential }))).then(apply);
+    },
     signOut: () => run(async () => {
       await requestRoute(`${base}/logout`, { method: "POST" });
       apply({ status: "anonymous" });
@@ -141,7 +205,7 @@ export function OminityAuthStateProvider({ children, options = {} }: { readonly 
     socialSignInUrl: (providerId) => `${base}/social/${encodeURIComponent(String(providerId))}/start`,
     refresh,
     setUser: (user) => setState((current) => current?.status === "authenticated" ? { ...current, user } : current),
-  }), [apply, base, error, pending, refresh, run, state]);
+  }), [apply, base, error, pending, refresh, run, startPasskeySignIn, state]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

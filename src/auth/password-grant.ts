@@ -2,6 +2,7 @@ import { createAuthClient } from "./client.js";
 import type {
   EmailCodeGrantRequestInput,
   OAuthTokenResponse,
+  PasskeyGrantRequestInput,
   PasswordGrantRequestInput,
   RefreshTokenRequestInput,
   UserAccessTokenRequestInput,
@@ -31,6 +32,23 @@ export async function requestEmailCodeToken(input: EmailCodeGrantRequestInput): 
     grantType: "email_code",
     email: input.email,
     code: input.code,
+    clientId: input.clientId,
+    clientSecret: input.clientSecret,
+    ...(typeof input.scope === "string" ? { scope: input.scope } : {}),
+    ...(input.requestOptions ? { requestOptions: input.requestOptions } : {}),
+  });
+}
+
+/** `grant_type=passkey`: exchanges the browser's answer to a passkey sign-in challenge for tokens. */
+export async function requestPasskeyToken(input: PasskeyGrantRequestInput): Promise<OAuthTokenResponse> {
+  const client = createAuthClient({
+    sdk: input.sdk,
+  });
+
+  return client.issueToken({
+    grantType: "passkey",
+    challengeId: input.challengeId,
+    credential: typeof input.credential === "string" ? input.credential : JSON.stringify(input.credential),
     clientId: input.clientId,
     clientSecret: input.clientSecret,
     ...(typeof input.scope === "string" ? { scope: input.scope } : {}),

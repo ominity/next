@@ -100,6 +100,8 @@ function toOAuthIssueRequest(input: AuthIssueTokenInput): {
   username?: string;
   password?: string;
   email?: string;
+  challenge_id?: string;
+  credential?: string;
   scope?: string;
   refresh_token?: string;
   code?: string;
@@ -117,6 +119,8 @@ function toOAuthIssueRequest(input: AuthIssueTokenInput): {
     ...(typeof input.username === "string" ? { username: input.username } : {}),
     ...(typeof input.password === "string" ? { password: input.password } : {}),
     ...(typeof input.email === "string" ? { email: input.email } : {}),
+    ...(typeof input.challengeId === "string" ? { challenge_id: input.challengeId } : {}),
+    ...(typeof input.credential === "string" ? { credential: input.credential } : {}),
     ...(typeof input.scope === "string" ? { scope: input.scope } : {}),
     ...(typeof input.refreshToken === "string" ? { refresh_token: input.refreshToken } : {}),
     ...(typeof input.code === "string" ? { code: input.code } : {}),

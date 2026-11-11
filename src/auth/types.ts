@@ -58,6 +58,10 @@ export interface AuthOAuthTokenInput {
   readonly password?: string;
   /** `email_code` grant: the email the code was sent to. */
   readonly email?: string;
+  /** `passkey` grant: the `challengeId` of the sign-in challenge. */
+  readonly challengeId?: string;
+  /** `passkey` grant: the browser's `PublicKeyCredential.toJSON()`, as a JSON string. */
+  readonly credential?: string;
   readonly scope?: string;
   readonly refreshToken?: string;
   readonly code?: string;
@@ -81,6 +85,20 @@ export interface EmailCodeGrantRequestInput {
   readonly sdk: OminityOptions;
   readonly email: string;
   readonly code: string;
+  readonly clientId: string;
+  readonly clientSecret: string;
+  readonly scope?: string;
+  readonly requestOptions?: RequestOptions;
+}
+
+/**
+ * `grant_type=passkey`: signs in with the browser's answer to a challenge from `POST /v1/users/passkeys/challenge`.
+ */
+export interface PasskeyGrantRequestInput {
+  readonly sdk: OminityOptions;
+  readonly challengeId: string;
+  /** `PublicKeyCredential.toJSON()` from `navigator.credentials.get()`, as an object or JSON string. */
+  readonly credential: Record<string, unknown> | string;
   readonly clientId: string;
   readonly clientSecret: string;
   readonly scope?: string;

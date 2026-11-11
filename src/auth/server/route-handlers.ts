@@ -1,5 +1,4 @@
 import { Ominity, type OminityOptions } from "@ominity/api-typescript";
-import { serverURLFromOptions } from "@ominity/api-typescript/lib/config.js";
 import type { User } from "@ominity/api-typescript/models/identity/users/user";
 import type { UserMfaMethod } from "@ominity/api-typescript/models/identity/user-mfa-method";
 import type { SocialProvider } from "@ominity/api-typescript/models/settings/social-provider";
@@ -9,6 +8,7 @@ import { createAuthClient } from "../client.js";
 import { normalizeOAuthTokenResponse } from "../normalize.js";
 import {
   requestEmailCodeToken,
+  requestPasskeyToken,
   requestPasswordGrantToken,
   requestRefreshToken,
 } from "../password-grant.js";
@@ -560,10 +560,12 @@ async function startRouteSession(
     readonly language?: string | undefined;
     /** The token's user when the caller loaded it already. */
     readonly user?: User | undefined;
+    /** The sign-in already proved two factors (a passkey with user verification): no MFA challenge. */
+    readonly mfaSatisfied?: boolean | undefined;
   },
 ): Promise<OminityAuthState> {
   const user = input.user ?? await loadSdkUser(config, input.token.accessToken, input.language);
-  const methods = await challengeMethods(config, input.token.accessToken, user.id, input.language);
+  const methods = input.mfaSatisfied ? [] : await challengeMethods(config, input.token.accessToken, user.id, input.language);
   const session: OminityAuthRouteSession = {
     ...createRouteAuthSession(input.token, user),
     ...(methods.length > 0 ? { mfaPending: true } : {}),
@@ -1259,32 +1261,13 @@ export function createOminityAuthEmailCodeSendRouteHandler(
 
     try {
       const language = await getLanguage(request);
-      const options = resolveApiKeySdkOptions(config, language);
-      const base = serverURLFromOptions(options)?.toString().replace(/\/+$/, "") ?? "";
-      const outgoing = new Request(`${base}/users/email-codes`, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          accept: "application/json",
-          authorization: `Bearer ${String(options.security && "apiKey" in options.security ? options.security.apiKey : "")}`,
-          ...(language ? { "accept-language": language } : {}),
-          ...(options.channelId ? { "x-channel-id": options.channelId } : {}),
-        },
-        body: JSON.stringify({
-          email,
-          redirectUrl: `${siteOrigin(config, request)}${path.startsWith("/") ? path : `/${path}`}`,
-          ...(language ? { language } : {}),
-          ...(ipAddress ? { ipAddress } : {}),
-          ...(userAgent ? { userAgent } : {}),
-        }),
+      const result = await createOminityApiKeySdk(config, language).users.sendEmailCode({
+        email,
+        redirectUrl: `${siteOrigin(config, request)}${path.startsWith("/") ? path : `/${path}`}`,
+        ...(language ? { language } : {}),
+        ...(ipAddress ? { ipAddress } : {}),
+        ...(userAgent ? { userAgent } : {}),
       });
-      const response = options.httpClient ? await options.httpClient.request(outgoing) : await fetch(outgoing);
-
-      if (response.status !== 202) {
-        throw Object.assign(new Error(`Ominity answered ${response.status}.`), { status: response.status });
-      }
-
-      const result = (await response.json()) as { expiresAt?: string; resendAvailableAt?: string };
       return Response.json({ ok: true, expiresAt: result.expiresAt, resendAvailableAt: result.resendAvailableAt });
     } catch (error) {
       const status = statusOf(error);
@@ -1803,5 +1786,128 @@ export function createOminityAuthRecoveryValidateRouteHandler(
     }
 
     return Response.json(await completeMfaChallenge(config, context, request));
+  };
+}
+
+/**
+ * The page origin a passkey ceremony runs on: the browser request's `Origin` (the page that called this route), else
+ * the site URL. Ominity only accepts one of the channel's domains, and checks the origin the browser signed.
+ */
+function passkeyOrigin(config: OminityAuthRouteHandlerConfig, request: Request): string {
+  const origin = asNonEmptyString(request.headers.get("origin"));
+  return origin && origin !== "null" ? origin : siteOrigin(config, request);
+}
+
+function passkeyErrorResponse(error: unknown, fallback: { readonly code: string; readonly message: string }): Response {
+  const status = statusOf(error);
+  const code = (error as { code?: unknown } | null)?.code;
+  const details = { message: error instanceof Error ? error.message : "Unknown error" };
+
+  if (status === 429) {
+    return jsonError(429, "PASSKEY_RATE_LIMITED", "Too many passkey attempts. Try again later.", details);
+  }
+  if (code === "channel.url_not_allowed" || code === "passkey.rp_id_mismatch" || code === "passkey.channel_required") {
+    return jsonError(422, "PASSKEY_NOT_AVAILABLE", "Passkeys are not available on this site. Add its domain to the channel in Ominity.", details);
+  }
+  return jsonError(status === 422 ? 422 : 502, fallback.code, fallback.message, details);
+}
+
+function noStore(body: unknown, status = 200): Response {
+  return Response.json(body, { status, headers: { "cache-control": "no-store" } });
+}
+
+function passkeyCredentialFrom(value: unknown): Record<string, unknown> | string | null {
+  if (typeof value === "string" && value.trim() !== "") return value;
+  return asObjectRecord(value) ?? null;
+}
+
+/**
+ * `POST {email?}`: starts a passkey sign-in (Ominity `POST /v1/users/passkeys/challenge`, with the API key) for the
+ * page's origin. With an email (email-first sign-in) the answer says whether it has passkeys here: `{ hasPasskeys:
+ * false }` comes without a challenge, the same for an unknown email. Pass `publicKey` to `navigator.credentials.get()`.
+ */
+export function createOminityAuthPasskeyChallengeRouteHandler(
+  config: OminityAuthRouteHandlerConfig,
+): (request: Request) => Promise<Response> {
+  const getLanguage = createRequestLanguageResolver(config.resolveLanguage);
+
+  return async (request: Request): Promise<Response> => {
+    let payload: unknown = {};
+    try {
+      const text = await request.text();
+      payload = text.trim() === "" ? {} : JSON.parse(text);
+    } catch {
+      return jsonError(400, "INVALID_JSON", "Request body must be valid JSON.");
+    }
+
+    const rawEmail = asObjectRecord(payload)?.email;
+    const email = typeof rawEmail === "undefined" || rawEmail === null ? null : asNonEmptyString(rawEmail)?.toLowerCase() ?? "";
+    if (email !== null && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return jsonError(400, "INVALID_EMAIL", "A valid email is required.");
+    }
+
+    const ipAddress = resolveRequestClientIp(request);
+    const userAgent = request.headers.get("user-agent");
+
+    try {
+      const language = await getLanguage(request);
+      const result = await createOminityApiKeySdk(config, language).users.createPasskeySignInChallenge({
+        origin: passkeyOrigin(config, request),
+        ...(email ? { email } : {}),
+        ...(ipAddress ? { ipAddress } : {}),
+        ...(userAgent ? { userAgent } : {}),
+      });
+      return noStore({ ok: true, ...result });
+    } catch (error) {
+      return passkeyErrorResponse(error, { code: "PASSKEY_CHALLENGE_FAILED", message: "The passkey sign-in could not be started." });
+    }
+  };
+}
+
+/**
+ * `POST {challengeId, credential}`: signs in with the browser's answer (`PublicKeyCredential.toJSON()`) through
+ * `grant_type=passkey`. A passkey proves two factors, so the user's MFA methods are not asked for. Answers the auth
+ * state like the login route.
+ */
+export function createOminityAuthPasskeyVerifyRouteHandler(
+  config: OminityAuthRouteHandlerConfig,
+): (request: Request) => Promise<Response> {
+  const getLanguage = createRequestLanguageResolver(config.resolveLanguage);
+
+  return async (request: Request): Promise<Response> => {
+    let payload: unknown;
+    try {
+      payload = await parseJsonBody(request);
+    } catch {
+      return jsonError(400, "INVALID_JSON", "Request body must be valid JSON.");
+    }
+
+    const record = asObjectRecord(payload);
+    const challengeId = asNonEmptyString(record?.challengeId);
+    const credential = passkeyCredentialFrom(record?.credential);
+    if (!challengeId || !credential) {
+      return jsonError(400, "INVALID_PASSKEY", "challengeId and credential are required.");
+    }
+
+    const cookieStore = await loadNextCookiesStore();
+
+    try {
+      const language = await getLanguage(request);
+      const tokenConfig = resolveTokenConfig(config);
+      const token = await requestPasskeyToken({
+        sdk: resolveAuthSdkOptions(config, undefined, language),
+        challengeId,
+        credential,
+        clientId: tokenConfig.clientId,
+        clientSecret: tokenConfig.clientSecret,
+        ...(typeof tokenConfig.scope === "string" ? { scope: tokenConfig.scope } : {}),
+      });
+
+      return Response.json(await startRouteSession(config, { cookieStore, token, request, language, mfaSatisfied: true }));
+    } catch (error) {
+      return jsonError(401, "INVALID_PASSKEY", "The passkey could not be verified. Try again.", {
+        message: error instanceof Error ? error.message : "Unknown error",
+      });
+    }
   };
 }

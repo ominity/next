@@ -250,6 +250,10 @@ const state = await auth.signIn({ email, password });
 if (state.status === "mfa_required") await auth.verifyMfa("authenticator", code);
 ```
 
+Passkeys sign users in without a password, on the channel's own domains: `checkPasskeys(email)` tells whether an
+email has one here, `signInWithPasskey({ email })` opens the browser's prompt, and `usePasskeys()` adds and removes
+them on the account page. See [Passkeys](docs/auth.md#passkeys).
+
 For custom server flows, `@ominity/next/auth` keeps `createAuthClient` (OAuth2 grants, MFA, recovery codes, login
 activity, password reset), the signed-session helpers and `createOminityUserAccessSdk`; `@ominity/next/auth/server`
 exports each auth route factory separately. See [`docs/auth.md`](docs/auth.md).

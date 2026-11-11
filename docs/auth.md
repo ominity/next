@@ -56,6 +56,7 @@ The routes below `/api/auth`:
 | `POST` | `login` | Password sign-in |
 | `POST` | `register` | Create a user and sign in |
 | `POST` | `email-code/send`, `email-code/verify` | Email-first signup and passwordless sign-in |
+| `POST` | `passkey/challenge`, `passkey/verify` | Passkey sign-in (email-first or discoverable) |
 | `POST` | `logout` | Clear the session |
 | `GET` | `me` | Current `OminityAuthState` |
 | `POST` | `refresh` | Refresh the OAuth tokens in the session |
@@ -80,7 +81,7 @@ type OminityAuthState =
   | { status: "authenticated"; user: User; expiresAt: string };
 ```
 
-`signIn`, `register`, `verifyEmailCode`, `verifyMfa`, `verifyRecoveryCode` and `refresh` resolve to this state. `useAuth().status` is
+`signIn`, `register`, `verifyEmailCode`, `signInWithPasskey`, `verifyMfa`, `verifyRecoveryCode` and `refresh` resolve to this state. `useAuth().status` is
 `"loading"` until the first `me` request completes.
 
 ## `useAuth`
@@ -95,6 +96,8 @@ type OminityAuthState =
 | `register({ firstName, email, password, lastName? })` | Create the user and sign in |
 | `sendEmailCode(email)` | Email a 6-digit sign-in or signup code; resolves to `{ expiresAt, resendAvailableAt }` |
 | `verifyEmailCode({ email, code })` | Sign in with the code; a signup code creates the user |
+| `checkPasskeys(email)` | Whether this email can sign in with a passkey here; resolves to `{ hasPasskeys }` |
+| `signInWithPasskey({ email?, conditional?, signal? })` | Open the browser's passkey prompt and sign in (no MFA step) |
 | `signOut()` | End the session |
 | `sendMfaCode(method)` | Send a code for `email` or `sms` |
 | `verifyMfa(method, code)`, `verifyRecoveryCode(code)` | Complete a pending sign-in |
@@ -173,6 +176,59 @@ the `email_code` grant on the auth client (added to user password clients by def
 The link carries the code in the URL fragment, so the verify page reads it with JavaScript and should not submit on
 load: mail scanners open links. Fill the code in and let the user confirm.
 
+## Passkeys
+
+Users sign in with a passkey kept by their browser, phone or password manager. Ominity only runs passkey ceremonies
+on the channel's own domains (Settings → Channels → Domains), so add each origin the site runs on, including
+`http://localhost:3000` for development. A channel's optional passkey domain (for example `example.com`) lets
+`app.example.com` and `shop.example.com` share passkeys.
+
+Email first: ask for the email, check it, then offer the passkey or another way in.
+
+```tsx
+const auth = useAuth();
+
+const { hasPasskeys } = await auth.checkPasskeys(email);
+if (hasPasskeys) {
+  // Opens the prompt right away: the challenge from checkPasskeys is reused.
+  await auth.signInWithPasskey({ email });
+} else {
+  await auth.sendEmailCode(email); // or a password field
+}
+```
+
+Without an email ("Sign in with a passkey"), `signInWithPasskey()` offers any passkey the browser has for the site.
+For autofill, give the email field `autocomplete="username webauthn"` and start a conditional sign-in on page load:
+
+```tsx
+useEffect(() => {
+  const controller = new AbortController();
+  isPasskeyAutofillSupported().then((supported) => {
+    if (supported) auth.signInWithPasskey({ conditional: true, signal: controller.signal }).catch(() => {});
+  });
+  return () => controller.abort();
+}, []);
+```
+
+- `checkPasskeys` answers `false` for an unknown email and for a user without passkeys alike. It is limited per
+  email and per visitor IP; past that the routes answer `429` `PASSKEY_RATE_LIMITED`.
+- Closing the prompt rejects with code `PASSKEY_CANCELLED` (not stored in `error`), an email without passkeys with
+  `NO_PASSKEYS`, an answer Ominity doesn't accept with `401` `INVALID_PASSKEY`, and a site that isn't one of the
+  channel's domains with `422` `PASSKEY_NOT_AVAILABLE`.
+- A passkey with user verification is already two factors: the sign-in never answers `mfa_required`.
+- Requirements in Ominity: the `passkey` grant on the auth client (added to user password clients by default), and the
+  site's origin among the channel's domains.
+
+Add and manage passkeys on the account page with `usePasskeys()`:
+
+```tsx
+const { passkeys, addPasskey, renamePasskey, removePasskey, pending, error } = usePasskeys();
+await addPasskey("MacBook"); // the name is optional; it defaults to the provider (iCloud Keychain, …)
+```
+
+Adding needs a recent sign-in: after ten minutes `addPasskey` rejects with code `passkey.reauthentication_required`,
+so ask the user to sign in again first. `isPasskeySupported()` tells whether the browser can use passkeys at all.
+
 ## Password reset
 
 ```ts
@@ -245,6 +301,17 @@ export function AuthenticatorSetup() {
   );
 }
 ```
+
+## `usePasskeys`
+
+The signed-in user's passkeys, through the SDK with the user's session (`users/{self}/passkeys` on the gateway).
+
+| Member | |
+| --- | --- |
+| `passkeys`, `loading`, `refresh()` | The user's `UserPasskey`s (name, provider, synced, last used), newest first |
+| `pending`, `error` | Shared state for these actions |
+| `addPasskey(name?)` | Create a passkey on this device (or a phone, through the browser's prompt) and add it |
+| `renamePasskey(id, name)`, `removePasskey(id)` | Rename or remove one; the user can still sign in with an emailed code |
 
 ## `useLoginActivity`
 
